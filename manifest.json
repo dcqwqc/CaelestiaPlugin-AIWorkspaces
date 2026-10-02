@@ -1,0 +1,15 @@
+{
+  "name": "AIWorkspaces",
+  "version": "0.1.0",
+  "author": "dcqwqc",
+  "homepage": "https://github.com/dcqwqc/CaelestiaPlugin-AIWorkspaces",
+  "icon": "smart_toy",
+  "description": "Give every local AI session its own dynamically-created Hyprland desktop so GUI work, restarts and screenshots never steal your workspace.",
+  "entryPoints": [
+    {
+      "type": "custom",
+      "source": "Main.qml"
+    }
+  ],
+  "settings": "Settings.qml"
+}

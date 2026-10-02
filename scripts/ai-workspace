@@ -1,0 +1,891 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import shlex
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+PLUGIN_ID = "dcqwqc/aiworkspaces"
+HOME = Path.home()
+CONFIG = HOME / ".config" / "caelestia" / "plugins.json"
+STATE_DIR = HOME / ".local" / "state" / "caelestia" / "ai-workspaces"
+SESSIONS_DIR = STATE_DIR / "sessions"
+
+DEFAULTS = {
+    "defaultMode": "isolated",
+    "resolution": "1920x1080",
+    "maxSessions": 32,
+    "cleanupOnExit": True,
+    "cleanupGraceSeconds": 2,
+    "autoWrapCodex": True,
+    "autoWrapClaude": True,
+    "autoWrapAgy": True,
+    "notify": False,
+}
+
+
+class AIWorkspaceError(RuntimeError):
+    pass
+
+
+def load_config() -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    try:
+        data = json.loads(CONFIG.read_text())
+    except Exception:
+        pass
+
+    settings = dict(DEFAULTS)
+    raw = data.get("settings", {}).get(PLUGIN_ID, {})
+    if isinstance(raw, dict):
+        settings.update(raw)
+    settings["_pluginEnabled"] = PLUGIN_ID in data.get("enabled", [])
+    return settings
+
+
+def notify(message: str) -> None:
+    if not load_config().get("notify", False):
+        return
+    try:
+        subprocess.Popen(
+            ["notify-send", "-a", "AI Workspaces", "AI Workspaces", message],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def runtime_env() -> dict[str, str]:
+    env = dict(os.environ)
+    runtime = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    env["XDG_RUNTIME_DIR"] = runtime
+
+    sig = env.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    sig_dir = Path(runtime) / "hypr" / sig if sig else None
+    if not sig_dir or not (sig_dir / ".socket.sock").exists():
+        root = Path(runtime) / "hypr"
+        candidates = [
+            p for p in root.iterdir()
+            if p.is_dir() and (p / ".socket.sock").exists()
+        ] if root.exists() else []
+        if not candidates:
+            raise AIWorkspaceError("No running Hyprland instance found")
+        candidates.sort(key=lambda p: p.stat().st_mtime)
+        env["HYPRLAND_INSTANCE_SIGNATURE"] = candidates[-1].name
+
+    wayland = env.get("WAYLAND_DISPLAY", "")
+    if not wayland or not (Path(runtime) / wayland).exists():
+        candidates = sorted(Path(runtime).glob("wayland-*"))
+        sockets = [
+            p for p in candidates
+            if p.exists() and not p.name.endswith(".lock")
+        ]
+        if sockets:
+            env["WAYLAND_DISPLAY"] = sockets[0].name
+
+    return env
+
+
+def run_cmd(
+    args: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+    capture: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(
+        args,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise AIWorkspaceError(detail or f"Command failed: {shlex.join(args)}")
+    return proc
+
+
+def hyprctl(*args: str, check: bool = True) -> str:
+    proc = run_cmd(["hyprctl", *args], env=runtime_env(), check=check)
+    return proc.stdout or ""
+
+
+def hypr_json(command: str) -> Any:
+    return json.loads(hyprctl("-j", command) or "null")
+
+
+def hypr_eval(expr: str, *, check: bool = True) -> str:
+    return hyprctl("dispatch", expr, check=check)
+
+
+def focused_origin() -> tuple[str, str]:
+    monitors = hypr_json("monitors")
+    focused = next((m for m in monitors if m.get("focused")), None)
+    if not focused:
+        raise AIWorkspaceError("Hyprland did not report a focused monitor")
+    return (
+        str(focused.get("name", "")),
+        str(focused.get("activeWorkspace", {}).get("name", "")),
+    )
+
+
+def state_path(session_id: str) -> Path:
+    return SESSIONS_DIR / f"{session_id}.json"
+
+
+def read_state(session_id: str) -> dict[str, Any]:
+    try:
+        return json.loads(state_path(session_id).read_text())
+    except Exception as exc:
+        raise AIWorkspaceError(f"Unknown AI workspace session: {session_id}") from exc
+
+
+def write_state(state: dict[str, Any]) -> None:
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    path = state_path(str(state["id"]))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2) + "\n")
+    tmp.replace(path)
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def list_states() -> list[dict[str, Any]]:
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    result: list[dict[str, Any]] = []
+    for path in sorted(SESSIONS_DIR.glob("*.json")):
+        try:
+            state = json.loads(path.read_text())
+            state["alive"] = pid_alive(int(state.get("ownerPid", -1)))
+            result.append(state)
+        except Exception:
+            continue
+    return result
+
+
+def provider_setting(provider: str) -> str | None:
+    return {
+        "codex": "autoWrapCodex",
+        "claude": "autoWrapClaude",
+        "agy": "autoWrapAgy",
+        "antigravity": "autoWrapAgy",
+    }.get(provider.lower())
+
+
+def session_id_for(provider: str) -> str:
+    clean = "".join(
+        ch for ch in provider.lower()
+        if ch.isalnum() or ch in "-_"
+    ) or "ai"
+    return f"{clean}-{secrets.token_hex(3)}"
+
+
+def create_output(state: dict[str, Any]) -> None:
+    monitors = hypr_json("monitors")
+    if any(m.get("name") == state["monitor"] for m in monitors):
+        return
+
+    env = runtime_env()
+    run_cmd(
+        ["hyprctl", "output", "create", "headless", str(state["monitor"])],
+        env=env,
+    )
+    run_cmd(
+        [
+            "hyprctl",
+            "keyword",
+            "monitor",
+            f"{state['monitor']},{state['resolution']}@60,auto,1",
+        ],
+        env=env,
+    )
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if any(
+            m.get("name") == state["monitor"]
+            for m in hypr_json("monitors")
+        ):
+            return
+        time.sleep(0.05)
+
+    raise AIWorkspaceError(f"Hyprland did not create {state['monitor']}")
+
+
+def new_session(
+    provider: str,
+    mode: str | None,
+    label: str | None,
+) -> dict[str, Any] | None:
+    cfg = load_config()
+    chosen_mode = mode or str(cfg.get("defaultMode", "isolated"))
+
+    provider_key = provider_setting(provider)
+    if not cfg.get("_pluginEnabled", False):
+        return None
+    if chosen_mode == "current":
+        return None
+    if provider_key and not cfg.get(provider_key, True):
+        return None
+
+    gc_sessions()
+
+    active = [state for state in list_states() if state.get("alive")]
+    limit = int(cfg.get("maxSessions", 32))
+    if len(active) >= limit:
+        raise AIWorkspaceError(
+            f"Maximum isolated AI sessions reached ({len(active)})"
+        )
+
+    origin_monitor, origin_workspace = focused_origin()
+    sid = session_id_for(provider)
+
+    state = {
+        "id": sid,
+        "provider": provider,
+        "label": label or provider,
+        "ownerPid": os.getpid(),
+        "originMonitor": origin_monitor,
+        "originWorkspace": origin_workspace,
+        "monitor": f"AI-{sid}",
+        "workspace": f"ai-{sid}",
+        "resolution": str(cfg.get("resolution", "1920x1080")),
+        "createdAt": int(time.time()),
+        "mode": "isolated",
+    }
+
+    create_output(state)
+    write_state(state)
+    notify(f"{state['label']} -> {state['workspace']}")
+    return state
+
+
+def session_env(state: dict[str, Any]) -> dict[str, str]:
+    env = dict(os.environ)
+    env.update({
+        "AI_SESSION_ID": str(state["id"]),
+        "AI_WORKSPACE": str(state["workspace"]),
+        "AI_MONITOR": str(state["monitor"]),
+        "AI_ORIGIN_WORKSPACE": str(state["originWorkspace"]),
+        "AI_ORIGIN_MONITOR": str(state["originMonitor"]),
+        "AI_WORKSPACE_MODE": "isolated",
+    })
+    return env
+
+
+def state_from_env(explicit: str | None = None) -> dict[str, Any]:
+    sid = explicit or os.environ.get("AI_SESSION_ID")
+    if not sid:
+        raise AIWorkspaceError(
+            "No isolated AI session is active. Start the agent through ai-workspace run."
+        )
+    state = read_state(sid)
+    create_output(state)
+    return state
+
+
+def workspace_clients(state: dict[str, Any]) -> list[dict[str, Any]]:
+    wanted = str(state["workspace"])
+    return [
+        client for client in hypr_json("clients")
+        if str(client.get("workspace", {}).get("name", "")) == wanted
+    ]
+
+
+def monitor_info(name: str) -> dict[str, Any] | None:
+    return next(
+        (m for m in hypr_json("monitors") if m.get("name") == name),
+        None,
+    )
+
+
+def make_ai_workspace_visible(state: dict[str, Any]) -> None:
+    deadline = time.monotonic() + 2.5
+    while time.monotonic() < deadline:
+        workspaces = hypr_json("workspaces")
+        target = next(
+            (w for w in workspaces if w.get("name") == state["workspace"]),
+            None,
+        )
+        if target:
+            break
+        time.sleep(0.05)
+    else:
+        return
+
+    info = monitor_info(str(state["monitor"]))
+    if not info:
+        return
+
+    active = str(info.get("activeWorkspace", {}).get("name", ""))
+    if active == state["workspace"]:
+        return
+
+    workspaces = hypr_json("workspaces")
+    old = next((w for w in workspaces if w.get("name") == active), None)
+    if old and int(old.get("windows", 0)) == 0:
+        hypr_eval(
+            "hl.dsp.workspace.move({ "
+            f"workspace = {json.dumps(active)}, "
+            f"monitor = {json.dumps(state['originMonitor'])}"
+            " })"
+        )
+
+
+def launch_gui(state: dict[str, Any], command: list[str]) -> None:
+    if not command:
+        raise AIWorkspaceError("Missing GUI command")
+
+    values = {
+        "AI_SESSION_ID": str(state["id"]),
+        "AI_WORKSPACE": str(state["workspace"]),
+        "AI_MONITOR": str(state["monitor"]),
+        "AI_ORIGIN_WORKSPACE": str(state["originWorkspace"]),
+        "AI_ORIGIN_MONITOR": str(state["originMonitor"]),
+        "AI_WORKSPACE_MODE": "isolated",
+    }
+    prefix = " ".join(
+        f"{key}={shlex.quote(value)}"
+        for key, value in values.items()
+    )
+    shell_command = f"env {prefix} {shlex.join(command)}"
+
+    expr = (
+        f"hl.dsp.exec_cmd({json.dumps(shell_command)}, {{ "
+        f"workspace = {json.dumps('name:' + state['workspace'] + ' silent')}, "
+        f"monitor = {json.dumps(state['monitor'] + ' silent')}, "
+        "no_initial_focus = true, "
+        f"suppress_event = {json.dumps('activate activatefocus fullscreenoutput')} "
+        "})"
+    )
+    hypr_eval(expr)
+    make_ai_workspace_visible(state)
+
+
+def move_window(state: dict[str, Any], selector: str) -> None:
+    hypr_eval(
+        "hl.dsp.window.move({ "
+        f"window = {json.dumps(selector)}, "
+        f"workspace = {json.dumps('name:' + state['workspace'])}, "
+        "follow = false "
+        "})"
+    )
+    hypr_eval(
+        "hl.dsp.workspace.move({ "
+        f"workspace = {json.dumps('name:' + state['workspace'])}, "
+        f"monitor = {json.dumps(state['monitor'])}"
+        " })"
+    )
+    make_ai_workspace_visible(state)
+
+
+def screenshot(state: dict[str, Any], output: str | None) -> str:
+    env = runtime_env()
+    path = (
+        Path(output)
+        if output
+        else Path("/tmp")
+        / f"ai-workspace-{state['id']}-{int(time.time())}.png"
+    )
+    run_cmd(
+        ["grim", "-o", str(state["monitor"]), str(path)],
+        env=env,
+    )
+    return str(path)
+
+
+def close_session_windows(state: dict[str, Any]) -> None:
+    for client in workspace_clients(state):
+        address = str(client.get("address", ""))
+        if address:
+            hypr_eval(
+                "hl.dsp.window.close({ "
+                f"window = {json.dumps('address:' + address)} "
+                "})",
+                check=False,
+            )
+
+    grace = max(0, int(load_config().get("cleanupGraceSeconds", 2)))
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        if not workspace_clients(state):
+            return
+        time.sleep(0.1)
+
+    for client in workspace_clients(state):
+        try:
+            pid = int(client.get("pid", 0))
+            if pid > 1 and pid != os.getpid():
+                os.kill(pid, signal.SIGTERM)
+        except (OSError, ValueError, TypeError):
+            pass
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if not workspace_clients(state):
+            return
+        time.sleep(0.1)
+
+
+def remove_output(state: dict[str, Any]) -> None:
+    if workspace_clients(state):
+        return
+
+    if monitor_info(str(state["monitor"])):
+        run_cmd(
+            ["hyprctl", "output", "remove", str(state["monitor"])],
+            env=runtime_env(),
+            check=False,
+        )
+
+
+def cleanup_session(session_id: str, *, delete_state: bool = True) -> None:
+    path = state_path(session_id)
+    if not path.exists():
+        return
+
+    state = read_state(session_id)
+    try:
+        close_session_windows(state)
+        remove_output(state)
+    except Exception:
+        # Keep the state file so the periodic GC pass can retry. Losing the
+        # bookkeeping while an output still exists would create an orphan.
+        state["ownerPid"] = 0
+        state["cleanupPending"] = True
+        write_state(state)
+        return
+
+    still_has_windows = bool(workspace_clients(state))
+    still_has_output = monitor_info(str(state["monitor"])) is not None
+    if still_has_windows or still_has_output:
+        state["ownerPid"] = 0
+        state["cleanupPending"] = True
+        write_state(state)
+        return
+
+    notify(f"Closed {state.get('workspace', session_id)}")
+    if delete_state:
+        path.unlink(missing_ok=True)
+
+
+def gc_sessions() -> None:
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    for state in list_states():
+        if not state.get("alive", False):
+            cleanup_session(str(state["id"]))
+
+
+def run_agent(
+    provider: str,
+    command: list[str],
+    mode: str | None,
+    label: str | None,
+) -> int:
+    if not command:
+        raise AIWorkspaceError("Missing agent command")
+
+    inherited = os.environ.get("AI_SESSION_ID")
+    if inherited and state_path(inherited).exists():
+        return subprocess.call(command, env=dict(os.environ))
+
+    state = new_session(provider, mode, label)
+    if state is None:
+        return subprocess.call(command, env=dict(os.environ))
+
+    env = session_env(state)
+    child: subprocess.Popen[Any] | None = None
+
+    def relay(signum: int, _frame: Any) -> None:
+        if child and child.poll() is None:
+            try:
+                child.send_signal(signum)
+            except ProcessLookupError:
+                pass
+
+    previous: dict[int, Any] = {}
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        previous[sig] = signal.signal(sig, relay)
+
+    try:
+        child = subprocess.Popen(command, env=env)
+        return child.wait()
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        if load_config().get("cleanupOnExit", True):
+            cleanup_session(str(state["id"]))
+
+
+def replace_marked_block(
+    path: Path,
+    begin: str,
+    end: str,
+    replacement: str,
+) -> None:
+    text = path.read_text() if path.exists() else ""
+    start = text.find(begin)
+    finish = text.find(end)
+    if start >= 0 and finish >= start:
+        finish += len(end)
+        text = text[:start].rstrip() + "\n\n" + text[finish:].lstrip()
+
+    if replacement:
+        text = text.rstrip() + "\n\n" + replacement.rstrip() + "\n"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def install_fish_wrappers() -> None:
+    funcs = HOME / ".config" / "fish" / "functions"
+    funcs.mkdir(parents=True, exist_ok=True)
+
+    codex = """function codex
+    set -l auth_file "$HOME/.codex/auth.json"
+    set -l daemon_file "$HOME/.codex/app-server-daemon/daemon.pid"
+
+    if test -f $auth_file
+        if not test -f $daemon_file
+            command codex app-server daemon start >/dev/null 2>&1
+        else
+            set -l auth_mtime (stat -c %Y $auth_file 2>/dev/null)
+            set -l daemon_mtime (stat -c %Y $daemon_file 2>/dev/null)
+            if test -n "$auth_mtime"; and test -n "$daemon_mtime"; and test $auth_mtime -gt $daemon_mtime
+                command codex app-server daemon restart >/dev/null 2>&1
+            end
+        end
+    end
+
+    if set -q AI_SESSION_ID
+        command codex $argv
+    else
+        command ai-workspace run --provider codex -- /usr/bin/codex $argv
+    end
+end
+"""
+    (funcs / "codex.fish").write_text(codex)
+
+    for account, name in (("Levi", "codexlevi"), ("Lina", "codexlina")):
+        body = f"""function {name}
+    codex-auth switch {account}; or return 1
+    command codex app-server daemon restart >/dev/null 2>&1; or return 1
+    if set -q AI_SESSION_ID
+        command codex $argv
+    else
+        command ai-workspace run --provider codex -- /usr/bin/codex $argv
+    end
+end
+"""
+        (funcs / f"{name}.fish").write_text(body)
+
+    claude = """function claude
+    if set -q AI_SESSION_ID
+        command claude $argv
+    else
+        command ai-workspace run --provider claude -- "$HOME/.local/bin/claude" $argv
+    end
+end
+"""
+    (funcs / "claude.fish").write_text(claude)
+
+    agy = """function agy
+    if set -q AI_SESSION_ID
+        command agy $argv
+    else
+        command ai-workspace run --provider agy -- "$HOME/.local/bin/agy" $argv
+    end
+end
+"""
+    (funcs / "agy.fish").write_text(agy)
+
+
+POLICY_BEGIN = "<!-- BEGIN AI WORKSPACES -->"
+POLICY_END = "<!-- END AI WORKSPACES -->"
+POLICY = f"""{POLICY_BEGIN}
+## Mirai AI workspace isolation
+
+When AI_SESSION_ID is set, this agent owns a private Hyprland desktop.
+- Launch or restart GUI test apps with: ai-workspace gui <command> [args...]
+- Inspect that desktop with: ai-workspace screenshot [path]
+- Move an existing test window with: ai-workspace move <Hyprland selector>
+- AI_WORKSPACE and AI_MONITOR identify this session's private workspace/output.
+- Do not switch or focus the user's normal workspace or monitor for inspection.
+- Do not use Hyprland workspace, focuswindow, or focusmonitor dispatches to inspect GUI state.
+- Do not kill or restart the user's normal app instance when a separate dev/test instance can be launched on the AI desktop.
+- Only operate directly on the user's current workspace when they explicitly request that.
+{POLICY_END}"""
+
+
+def install_agent_policy() -> None:
+    targets = [
+        HOME / "AGENTS.md",
+        HOME / "CLAUDE.md",
+        HOME / "Projects" / "AGENTS.md",
+        HOME / "Projects" / "CLAUDE.md",
+    ]
+
+    old_heading = "## Mirai GUI automation policy"
+
+    for path in targets:
+        text = path.read_text() if path.exists() else ""
+        idx = text.find(old_heading)
+        if idx >= 0:
+            next_heading = text.find("\n## ", idx + len(old_heading))
+            if next_heading < 0:
+                text = text[:idx].rstrip() + "\n"
+            else:
+                text = (
+                    text[:idx].rstrip()
+                    + "\n\n"
+                    + text[next_heading + 1:].lstrip()
+                )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+        replace_marked_block(
+            path,
+            POLICY_BEGIN,
+            POLICY_END,
+            POLICY,
+        )
+
+    gemini = HOME / ".gemini" / "GEMINI.md"
+    replace_marked_block(
+        gemini,
+        POLICY_BEGIN,
+        POLICY_END,
+        POLICY,
+    )
+
+
+def patch_hypr_user() -> tuple[bool, bool]:
+    path = HOME / ".config" / "caelestia" / "hypr-user.lua"
+    original = path.read_text() if path.exists() else ""
+    text = original
+
+    old_begin = "-- BEGIN AI DESKTOP"
+    old_end = "-- END AI DESKTOP -------------------------------------------------------------"
+    start = text.find(old_begin)
+    finish = text.find(old_end)
+    migrated_old_prototype = start >= 0 and finish >= start
+    if migrated_old_prototype:
+        finish += len(old_end)
+        text = text[:start].rstrip() + "\n\n" + text[finish:].lstrip()
+
+    new_begin = "-- BEGIN AI WORKSPACES PLUGIN"
+    new_end = "-- END AI WORKSPACES PLUGIN"
+    start = text.find(new_begin)
+    finish = text.find(new_end)
+    if start >= 0 and finish >= start:
+        finish += len(new_end)
+        text = text[:start].rstrip() + "\n\n" + text[finish:].lstrip()
+
+    block = """-- BEGIN AI WORKSPACES PLUGIN
+-- Keep absolute touchscreen coordinates on the real laptop panel while
+-- per-agent headless outputs exist.
+hl.device({ name = "wacom-hid-53b7-finger", output = "eDP-1" })
+-- END AI WORKSPACES PLUGIN"""
+
+    updated = text.rstrip() + "\n\n" + block + "\n"
+    changed = updated != original
+    if changed:
+        path.write_text(updated)
+    return changed, migrated_old_prototype
+
+
+def bootstrap() -> None:
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+    me = Path(__file__).resolve()
+    link = HOME / ".local" / "bin" / "ai-workspace"
+    link.parent.mkdir(parents=True, exist_ok=True)
+
+    if link.exists() or link.is_symlink():
+        try:
+            if link.resolve() != me:
+                link.unlink()
+        except Exception:
+            link.unlink(missing_ok=True)
+
+    if not link.exists():
+        link.symlink_to(me)
+
+    install_fish_wrappers()
+    install_agent_policy()
+    hypr_changed, migrated_old_prototype = patch_hypr_user()
+
+    # One-time migration only. A future user is free to have a real output
+    # named AI; never remove it merely because this plugin starts.
+    if migrated_old_prototype:
+        try:
+            if monitor_info("AI"):
+                run_cmd(
+                    ["hyprctl", "output", "remove", "AI"],
+                    env=runtime_env(),
+                    check=False,
+                )
+        except Exception:
+            pass
+
+    if hypr_changed:
+        try:
+            hyprctl("reload", check=False)
+        except Exception:
+            pass
+
+    gc_sessions()
+
+
+def print_list(json_mode: bool) -> None:
+    states = list_states()
+    if json_mode:
+        print(json.dumps(states, indent=2))
+        return
+
+    if not states:
+        print("No AI workspace sessions.")
+        return
+
+    for state in states:
+        status = "alive" if state.get("alive") else "stale"
+        print(
+            f"{state.get('id')}  {status:5}  {state.get('provider')}  "
+            f"{state.get('workspace')} @ {state.get('monitor')}  "
+            f"origin={state.get('originWorkspace')}"
+        )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ai-workspace")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    run = sub.add_parser("run")
+    run.add_argument("--provider", default="ai")
+    run.add_argument("--mode", choices=["isolated", "current"])
+    run.add_argument("--label")
+    run.add_argument("command", nargs=argparse.REMAINDER)
+
+    gui = sub.add_parser("gui")
+    gui.add_argument("--session")
+    gui.add_argument("command", nargs=argparse.REMAINDER)
+
+    move = sub.add_parser("move")
+    move.add_argument("--session")
+    move.add_argument("selector")
+
+    shot = sub.add_parser("screenshot")
+    shot.add_argument("--session")
+    shot.add_argument("path", nargs="?")
+
+    status = sub.add_parser("status")
+    status.add_argument("--session")
+
+    listing = sub.add_parser("list")
+    listing.add_argument("--json", action="store_true")
+
+    close = sub.add_parser("close")
+    close.add_argument("session", nargs="?")
+
+    sub.add_parser("gc")
+    sub.add_parser("bootstrap")
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+
+    try:
+        if args.cmd == "bootstrap":
+            bootstrap()
+            return 0
+
+        if args.cmd == "gc":
+            gc_sessions()
+            return 0
+
+        if args.cmd == "run":
+            command = list(args.command)
+            if command and command[0] == "--":
+                command = command[1:]
+            return run_agent(
+                args.provider,
+                command,
+                args.mode,
+                args.label,
+            )
+
+        if args.cmd == "gui":
+            command = list(args.command)
+            if command and command[0] == "--":
+                command = command[1:]
+            state = state_from_env(args.session)
+            launch_gui(state, command)
+            return 0
+
+        if args.cmd == "move":
+            state = state_from_env(args.session)
+            move_window(state, args.selector)
+            return 0
+
+        if args.cmd == "screenshot":
+            state = state_from_env(args.session)
+            print(screenshot(state, args.path))
+            return 0
+
+        if args.cmd == "status":
+            if args.session or os.environ.get("AI_SESSION_ID"):
+                state = state_from_env(args.session)
+                state["alive"] = pid_alive(int(state.get("ownerPid", -1)))
+                state["windows"] = len(workspace_clients(state))
+                info = monitor_info(str(state["monitor"]))
+                state["monitorActiveWorkspace"] = (
+                    info.get("activeWorkspace", {}).get("name")
+                    if info
+                    else None
+                )
+                print(json.dumps(state, indent=2))
+            else:
+                print_list(False)
+            return 0
+
+        if args.cmd == "list":
+            print_list(args.json)
+            return 0
+
+        if args.cmd == "close":
+            sid = args.session or os.environ.get("AI_SESSION_ID")
+            if not sid:
+                raise AIWorkspaceError(
+                    "Pass a session id or run inside an AI session"
+                )
+            cleanup_session(sid)
+            return 0
+
+    except AIWorkspaceError as exc:
+        print(f"ai-workspace: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
