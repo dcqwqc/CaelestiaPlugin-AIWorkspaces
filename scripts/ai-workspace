@@ -397,6 +397,34 @@ def move_window(state: dict[str, Any], selector: str) -> None:
     make_ai_workspace_visible(state)
 
 
+def handoff_window(state: dict[str, Any], selector: str) -> None:
+    """Show a verified AI-workspace result on the user's active workspace."""
+    _target_monitor, target_workspace = focused_origin()
+    hypr_eval(
+        "hl.dsp.window.move({ "
+        f"window = {json.dumps(selector)}, "
+        f"workspace = {json.dumps('name:' + target_workspace)}, "
+        "follow = false "
+        "})"
+    )
+    hypr_eval(
+        "hl.dsp.window.bring_to_top({ "
+        f"window = {json.dumps(selector)}"
+        " })"
+    )
+    hypr_eval(
+        "hl.dsp.window.fullscreen_state({ "
+        f"window = {json.dumps(selector)}, "
+        "internal = 2, client = 2, action = 'set' "
+        "})"
+    )
+    hypr_eval(
+        "hl.dsp.focus({ "
+        f"window = {json.dumps(selector)}"
+        " })"
+    )
+
+
 def screenshot(state: dict[str, Any], output: str | None) -> str:
     env = runtime_env()
     path = (
@@ -626,12 +654,15 @@ POLICY = f"""{POLICY_BEGIN}
 When AI_SESSION_ID is set, this agent owns a private Hyprland desktop.
 - Launch or restart GUI test apps with: ai-workspace gui <command> [args...]
 - Inspect that desktop with: ai-workspace screenshot [path]
-- Move an existing test window with: ai-workspace move <Hyprland selector>
+- Move a window into the test workspace with: ai-workspace move <Hyprland selector>
+- Hand off a verified final GUI result in fullscreen with: ai-workspace handoff <Hyprland selector>
 - AI_WORKSPACE and AI_MONITOR identify this session's private workspace/output.
 - Do not switch or focus the user's normal workspace or monitor for inspection.
 - Do not use Hyprland workspace, focuswindow, or focusmonitor dispatches to inspect GUI state.
 - Do not kill or restart the user's normal app instance when a separate dev/test instance can be launched on the AI desktop.
 - Only operate directly on the user's current workspace when they explicitly request that.
+- **Fast visible delivery:** When the user explicitly asks for a familiar, repeatable GUI result on their screen, display it directly on their current workspace instead of re-staging it in the AI workspace. Deliver first; then, without changing focus or otherwise interrupting the user, quietly capture a screenshot to verify it. Use the private AI workspace for new, uncertain, or exploratory GUI work.
+- For new, uncertain, or exploratory GUI work, hand off the final GUI result only after all requested work has completed and been verified, and only when the user explicitly asks to see it or the request unmistakably calls for it. Never hand off an in-progress or unverified result.
 {POLICY_END}"""
 
 
@@ -792,6 +823,10 @@ def build_parser() -> argparse.ArgumentParser:
     move.add_argument("--session")
     move.add_argument("selector")
 
+    handoff = sub.add_parser("handoff")
+    handoff.add_argument("--session")
+    handoff.add_argument("selector")
+
     shot = sub.add_parser("screenshot")
     shot.add_argument("--session")
     shot.add_argument("path", nargs="?")
@@ -844,6 +879,11 @@ def main() -> int:
         if args.cmd == "move":
             state = state_from_env(args.session)
             move_window(state, args.selector)
+            return 0
+
+        if args.cmd == "handoff":
+            state = state_from_env(args.session)
+            handoff_window(state, args.selector)
             return 0
 
         if args.cmd == "screenshot":
