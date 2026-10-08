@@ -28,6 +28,7 @@ DEFAULTS = {
     "autoWrapCodex": True,
     "autoWrapClaude": True,
     "autoWrapAgy": True,
+    "loomTaskVisibility": True,
     "notify": False,
 }
 
@@ -522,6 +523,26 @@ def gc_sessions() -> None:
             cleanup_session(str(state["id"]))
 
 
+def loom_task_event(event: str, *, provider: str = "", session: str = "", task_id: str = "",
+                    exit_code: int = 0) -> dict[str, Any]:
+    """Best-effort: never prevent an agent from starting if the overlay is down."""
+    script=Path(__file__).resolve().parent / "loom_task_visibility.py"
+    if not script.is_file() or not load_config().get("loomTaskVisibility", True):
+        return {"ok": False, "reason": "disabled"}
+    command=["/usr/bin/python3",str(script),event]
+    if event == "start":
+        command+=["--provider",provider,"--session",session]
+        existing=os.environ.get("LOOM_TASK_ID")
+        if existing:command+=["--existing-id",existing]
+    else:
+        command+=["--task-id",task_id,"--exit-code",str(exit_code)]
+    try:
+        result=subprocess.run(command,capture_output=True,text=True,timeout=7)
+        return json.loads(result.stdout.strip() or "{}")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {"ok": False, "reason": "unavailable"}
+
+
 def run_agent(
     provider: str,
     command: list[str],
@@ -540,7 +561,14 @@ def run_agent(
         return subprocess.call(command, env=dict(os.environ))
 
     env = session_env(state)
+    loom = loom_task_event("start", provider=provider, session=str(state["id"]))
+    loom_task_id = str(loom.get("task_id") or "") if loom.get("ok") else ""
+    if loom_task_id:
+        state["loomTaskId"] = loom_task_id
+        write_state(state)
+        env["LOOM_TASK_ID"] = loom_task_id
     child: subprocess.Popen[Any] | None = None
+    exit_code: int | None = None
 
     def relay(signum: int, _frame: Any) -> None:
         if child and child.poll() is None:
@@ -555,8 +583,12 @@ def run_agent(
 
     try:
         child = subprocess.Popen(command, env=env)
-        return child.wait()
+        exit_code = child.wait()
+        return exit_code
     finally:
+        if loom_task_id:
+            loom_task_event("finish", task_id=loom_task_id,
+                            exit_code=exit_code if exit_code is not None else 1)
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         if load_config().get("cleanupOnExit", True):
@@ -657,6 +689,7 @@ When AI_SESSION_ID is set, this agent owns a private Hyprland desktop.
 - Move a window into the test workspace with: ai-workspace move <Hyprland selector>
 - Hand off a verified final GUI result in fullscreen with: ai-workspace handoff <Hyprland selector>
 - AI_WORKSPACE and AI_MONITOR identify this session's private workspace/output.
+- The launcher automatically creates/reuses a pinned Loom task. If LOOM_TASK_ID is set, update **that** Loom card through Loom MCP; do not create a duplicate. Process exit alone is not proof of verified completion.
 - Do not switch or focus the user's normal workspace or monitor for inspection.
 - Do not use Hyprland workspace, focuswindow, or focusmonitor dispatches to inspect GUI state.
 - Do not kill or restart the user's normal app instance when a separate dev/test instance can be launched on the AI desktop.

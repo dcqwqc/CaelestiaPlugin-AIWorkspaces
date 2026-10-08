@@ -61,3 +61,24 @@ Then enable dcqwqc/aiworkspaces in Nexus -> Plugins.
 ## Licence
 
 GPL-3.0-or-later.
+
+## Loom MCP task visibility
+
+The existing **Loom** desktop companion is the task display. For each newly
+created private AI session, the launcher now creates or reuses a pinned Loom
+Working card, passes its stable ID through `LOOM_TASK_ID`, and checks the
+card when the child process exits. If the process exits successfully without
+verified completion, the card remains **waiting for review**, not falsely
+Done. If the process fails, the card is blocked. If the agent itself already
+marked it done or blocked, the launcher preserves that state.
+
+To resume a known work item without duplicating its card, export an existing
+`LOOM_TASK_ID` before launching the agent. The universal
+`loom-task-visibility` AI System skill teaches agents to update the same
+card. A missing Loom connection never prevents the agent from running.
+
+This hook applies to agents launched through `ai-workspace run` with an
+isolated workspace; it does **not** automatically cover direct binary
+execution, ChatGPT web sessions, or remote agents that bypass the launcher.
+The `loomTaskVisibility` setting defaults to true and can be disabled in
+the plugin's configuration if needed.
