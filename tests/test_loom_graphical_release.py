@@ -58,3 +58,13 @@ class ReleaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaunchQuotingTests(unittest.TestCase):
+    def test_non_ascii_arguments_stay_valid_lua(self):
+        sent = []
+        state = {"id": "s", "workspace": "ai-s", "monitor": "AI-s", "originWorkspace": "1", "originMonitor": "eDP-1"}
+        with patch.object(m, "hypr_eval", side_effect=sent.append), patch.object(m, "make_ai_workspace_visible"):
+            m.launch_gui(state, ["zenity", "--title", "Tabby Work · ✓"])
+        self.assertIn("Tabby Work · ✓", sent[0])  # Lua has no \\uXXXX escapes
+        self.assertNotIn("\\u00b7", sent[0])

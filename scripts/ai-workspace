@@ -370,7 +370,7 @@ def launch_gui(state: dict[str, Any], command: list[str]) -> None:
     shell_command = f"env {prefix} {shlex.join(command)}"
 
     expr = (
-        f"hl.dsp.exec_cmd({json.dumps(shell_command)}, {{ "
+        f"hl.dsp.exec_cmd({json.dumps(shell_command, ensure_ascii=False)}, {{ "
         f"workspace = {json.dumps('name:' + state['workspace'] + ' silent')}, "
         f"monitor = {json.dumps(state['monitor'] + ' silent')}, "
         "no_initial_focus = true, "
