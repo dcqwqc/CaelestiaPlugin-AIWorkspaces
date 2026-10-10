@@ -19,6 +19,11 @@ class Tests(unittest.TestCase):
             if name=="loom_task_create":
                 self.assertEqual(args["status"],"working")
                 self.assertNotIn("progress",args)
+                self.assertEqual(args["title"],"AI Workspaces › Codex › Name the actual task")
+                self.assertNotIn("ab123",args["title"])
+                self.assertIn("Goal:",args["summary"])
+                self.assertIn("Current:",args["summary"])
+                self.assertIn("Next:",args["summary"])
                 return {"ok":True,"task":{"id":"new"}}
             return {"ok":True,"tasks":[]}
         with patch.object(m,"call",side_effect=fake):
@@ -57,6 +62,13 @@ class Tests(unittest.TestCase):
                 self.assertEqual(m.finish("x",code)["status"],"removed")
                 rm.assert_called_once_with("x")
                 self.assertEqual(req.call_count,1)
+    def test_new_placeholder_clean_exit_removes_card(self):
+        listing={"ok":True,"tasks":[{"id":"x","status":"working",
+            "summary":"Goal: Task objective not yet recorded. Current: Agent started."}]}
+        with patch.object(m,"call",return_value=listing), \
+             patch.object(m,"remove",return_value={"ok":True}) as rm:
+            self.assertEqual(m.finish("x",0)["status"],"removed")
+            rm.assert_called_once_with("x")
     def test_untouched_crash_stays_blocked(self):
         def fake(name,args):
             if name=="loom_task_list":
