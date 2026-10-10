@@ -13,7 +13,8 @@ from pathlib import Path
 
 MCP = Path.home() / ".local/share/caelestia/plugins/loom/loom_mcp.py"
 CTL = MCP.with_name("loomctl.py")
-PLACEHOLDER = "Agent started in its private workspace"
+PLACEHOLDER = "Agent started in its private workspace"  # Legacy card marker
+NEEDS_OBJECTIVE = "Task objective not yet recorded"
 # Clean exit, or the user closing the terminal / pressing Ctrl+C.
 QUIET_EXITS = {0, 129, 130, 143}
 
@@ -45,9 +46,14 @@ def start(provider: str, session: str, existing: str | None) -> dict:
         if q.get("ok") and any(z.get("id")==existing for z in q.get("tasks",[])):
             return {"ok":True,"task_id":existing,"reused":True}
     safe="".join(c for c in provider if c.isalnum() or c in " -_")[:24].strip() or "Agent"
-    title=f"{safe.title()} · Session {session[-6:]}"
+    # Keep opaque session identifiers in the launcher state, not on the user's task board.
+    # The assigned agent must replace this temporary card once its real goal is known.
+    title=f"AI Workspaces › {safe.title()} › Name the actual task"
+    summary=(f"Goal: {NEEDS_OBJECTIVE}. "
+             "Current: An AI worker has started a private development session. "
+             "Next: The worker must name the specific app, feature, and requested outcome.")
     r=call("loom_task_create",{"title":title,
-        "summary":f"{PLACEHOLDER}. Verification pending.",
+        "summary":summary,
         "status":"working"})
     if r.get("ok") and isinstance(r.get("task"),dict):
         return {"ok":True,"task_id":r["task"].get("id"),"reused":False}
@@ -64,7 +70,7 @@ def finish(task_id:str, exit_code:int)->dict:
     previous_summary=str(task.get("summary") or "").strip()
     # The agent never reported anything: the card carries no information, so
     # leaving it as "awaiting verification" only clutters the board.
-    untouched=not previous_summary or PLACEHOLDER in previous_summary
+    untouched=not previous_summary or PLACEHOLDER in previous_summary or NEEDS_OBJECTIVE in previous_summary
     if untouched and exit_code in QUIET_EXITS:
         result=remove(task_id)
         return {"ok":bool(result.get("ok")),"status":"removed"}
