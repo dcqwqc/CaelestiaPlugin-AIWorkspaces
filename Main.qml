@@ -84,7 +84,9 @@ Scope {
         const shown = agents.filter(a => a.active && !a.hidden && !root.allHidden).map(a => a.workspace);
         if (!sameList(shown, shownIds))
             shownIds = shown;
-        const viewing = agents.filter(a => a.state !== "crashed").map(a => a.workspace);
+        // Nested-Hyprland agents are their own native windows on special:loom-agents;
+        // the streamed viewer is only for agents on the Xvfb fallback.
+        const viewing = agents.filter(a => a.state !== "crashed" && a.backend !== "nested").map(a => a.workspace);
         if (!sameList(viewing, viewerIds))
             viewerIds = viewing;
     }
