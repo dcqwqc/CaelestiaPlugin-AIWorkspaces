@@ -520,7 +520,32 @@ def gc_sessions() -> None:
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     for state in list_states():
         if not state.get("alive", False):
+            release_loom_graphical(str(state["id"]))
             cleanup_session(str(state["id"]))
+
+
+def release_loom_graphical(session_id: str) -> dict[str, Any]:
+    """Best-effort: release the Loom graphical workspaces (private displays,
+    browsers) this agent session acquired. Never blocks the launcher for long
+    and never fails it when Loom's agent-input service is not running."""
+    import socket
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    path = os.environ.get("LOOM_AGENT_INPUT_SOCKET") or os.path.join(runtime, "loom-agent-input.sock")
+    if not session_id or not os.path.exists(path):
+        return {"ok": False, "reason": "unavailable"}
+    payload = json.dumps({"command": "release-owner", "ai_session": session_id}).encode() + b"\n"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(8)
+            sock.connect(path)
+            sock.sendall(payload)
+            sock.shutdown(socket.SHUT_WR)
+            data = b""
+            while chunk := sock.recv(65536):
+                data += chunk
+        return json.loads(data or b"{}")
+    except (OSError, ValueError):
+        return {"ok": False, "reason": "unavailable"}
 
 
 def loom_task_event(event: str, *, provider: str = "", session: str = "", task_id: str = "",
@@ -586,6 +611,7 @@ def run_agent(
         exit_code = child.wait()
         return exit_code
     finally:
+        release_loom_graphical(str(state["id"]))
         if loom_task_id:
             loom_task_event("finish", task_id=loom_task_id,
                             exit_code=exit_code if exit_code is not None else 1)
@@ -696,6 +722,7 @@ When AI_SESSION_ID is set, this agent owns a private Hyprland desktop.
 - Only operate directly on the user's current workspace when they explicitly request that.
 - **Fast visible delivery:** When the user explicitly asks for a familiar, repeatable GUI result on their screen, display it directly on their current workspace instead of re-staging it in the AI workspace. Deliver first; then, without changing focus or otherwise interrupting the user, quietly capture a screenshot to verify it. Use the private AI workspace for new, uncertain, or exploratory GUI work.
 - For new, uncertain, or exploratory GUI work, hand off the final GUI result only after all requested work has completed and been verified, and only when the user explicitly asks to see it or the request unmistakably calls for it. Never hand off an in-progress or unverified result.
+- **Interacting with GUIs (clicking, typing):** never inject input into this Hyprland session; it has one seat shared with the user. Use Loom's isolated graphical workspaces (`loom_gui_*` MCP tools; private display, own pointer and keyboard focus). Prefer terminal commands and APIs, then `kind=browser` with selectors/visible text, and raw coordinates only as a last resort. Reuse one `request_key` per task, release the workspace when done, and if `loom_gui_capabilities` reports a capability unavailable, stop and report it rather than falling back to the user's desktop.
 {POLICY_END}"""
 
 
