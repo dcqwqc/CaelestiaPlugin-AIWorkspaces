@@ -80,4 +80,60 @@ SettingsObject {
         icon: "notifications"
         inputType: SettingMeta.Switch
     }
+
+    property bool agentCursors: true
+    SettingMeta on agentCursors {
+        label: "Show AI agent cursors"
+        description: "Small click-through previews of each active agent's private display with its pointer. Hidden while agents are idle."
+        icon: "arrow_selector_tool"
+        inputType: SettingMeta.Switch
+    }
+
+    property bool agentCursorLabels: true
+    SettingMeta on agentCursorLabels {
+        label: "Agent name labels"
+        description: "Show a compact name tag next to each agent pointer."
+        icon: "label"
+        inputType: SettingMeta.Switch
+    }
+
+    property int agentCursorOpacity: 90
+    SettingMeta on agentCursorOpacity {
+        label: "Agent cursor opacity"
+        description: "Opacity of the agent previews and pointers, in percent."
+        icon: "opacity"
+        inputType: SettingMeta.SpinBox
+        min: 30
+        max: 100
+        step: 5
+    }
+
+    property string agentCursorAnimation: "full"
+    SettingMeta on agentCursorAnimation {
+        label: "Agent cursor animation"
+        description: "Pointer motion and click feedback intensity."
+        icon: "animation"
+        inputType: SettingMeta.SplitButton
+        options: ["full", "subtle", "off"]
+    }
+
+    property int agentCursorTileWidth: 240
+    SettingMeta on agentCursorTileWidth {
+        label: "Agent preview width"
+        description: "Width of each agent preview in logical pixels."
+        icon: "width"
+        inputType: SettingMeta.SpinBox
+        min: 160
+        max: 400
+        step: 20
+    }
+
+    property string agentCursorPosition: "bottom-right"
+    SettingMeta on agentCursorPosition {
+        label: "Agent preview corner"
+        description: "Screen corner for the agent previews on the focused monitor."
+        icon: "picture_in_picture"
+        inputType: SettingMeta.SplitButton
+        options: ["bottom-right", "top-right", "bottom-left", "top-left"]
+    }
 }
