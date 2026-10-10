@@ -86,7 +86,7 @@ the plugin's configuration if needed.
 ## Loom agent cursors
 
 When an agent works in one of Loom's isolated graphical workspaces (see
-`docs/AGENT_INPUT.md` in CaelestiaPlugin-Loom), this plugin shows a small
+`docs/AGENT_INPUT.md` in CaelestiaPlugin-Loom), this plugin (Main.qml) shows a small
 live preview of that agent's private display in a corner of the focused
 monitor. The agent's pastel pointer sits at its real position, with a compact
 name tag and click ripples. The layer is fully click-through (empty input

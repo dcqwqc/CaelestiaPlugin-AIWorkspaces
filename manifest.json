@@ -9,10 +9,6 @@
     {
       "type": "custom",
       "source": "Main.qml"
-    },
-    {
-      "type": "custom",
-      "source": "AgentCursors.qml"
     }
   ],
   "settings": "Settings.qml"
