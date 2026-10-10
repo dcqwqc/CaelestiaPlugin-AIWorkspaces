@@ -191,7 +191,10 @@ Scope {
                 anchors.margins: 2
                 source: tile.modelData.preview ? `file://${tile.modelData.preview}?${tile.modelData.previewSeq}` : ""
                 cache: false
-                asynchronous: true
+                // Synchronous on purpose: an async reload blanks the old frame
+                // until the next decodes, making the tile flicker see-through.
+                // Previews are ~360px PNGs, refreshed at most every 1.5 s.
+                asynchronous: false
                 smooth: true
                 fillMode: Image.Stretch
                 visible: status === Image.Ready
