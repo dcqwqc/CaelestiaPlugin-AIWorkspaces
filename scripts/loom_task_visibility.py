@@ -2,14 +2,20 @@
 """Best-effort Loom Working-card lifecycle for isolated AI sessions.
 
 No shell, arbitrary filesystem, or browser operations are exposed to Loom;
-only the existing local Loom MCP's task tools are used. Failure never prevents
-starting the underlying agent. Do not treat process exit 0 as verified Done.
+only the local Loom MCP's task tools and loomctl's card removal are used.
+Failure never prevents starting the underlying agent. Do not treat process
+exit 0 as verified Done; a card the agent never reported on is removed
+instead of being parked as "waiting" forever.
 """
 from __future__ import annotations
 import argparse, json, subprocess, sys
 from pathlib import Path
 
 MCP = Path.home() / ".local/share/caelestia/plugins/loom/loom_mcp.py"
+CTL = MCP.with_name("loomctl.py")
+PLACEHOLDER = "Agent started in its private workspace"
+# Clean exit, or the user closing the terminal / pressing Ctrl+C.
+QUIET_EXITS = {0, 129, 130, 143}
 
 def call(name: str, args: dict) -> dict:
     if not MCP.is_file():return {"ok":False,"error":"loom-mcp-missing"}
@@ -24,6 +30,15 @@ def call(name: str, args: dict) -> dict:
     except (OSError,subprocess.TimeoutExpired,ValueError) as e:
         return {"ok":False,"error":type(e).__name__}
 
+def remove(task_id: str) -> dict:
+    if not CTL.is_file():return {"ok":False,"error":"loomctl-missing"}
+    try:
+        p=subprocess.run(["/usr/bin/python3",str(CTL),"work-delete-user",task_id],
+            capture_output=True,text=True,timeout=5)
+        return json.loads(p.stdout.strip() or "{}")
+    except (OSError,subprocess.TimeoutExpired,ValueError) as e:
+        return {"ok":False,"error":type(e).__name__}
+
 def start(provider: str, session: str, existing: str | None) -> dict:
     if existing:
         q=call("loom_task_list",{})
@@ -32,7 +47,7 @@ def start(provider: str, session: str, existing: str | None) -> dict:
     safe="".join(c for c in provider if c.isalnum() or c in " -_")[:24].strip() or "Agent"
     title=f"{safe.title()} · Session {session[-6:]}"
     r=call("loom_task_create",{"title":title,
-        "summary":"Agent started in its private workspace. Verification pending.",
+        "summary":f"{PLACEHOLDER}. Verification pending.",
         "status":"working"})
     if r.get("ok") and isinstance(r.get("task"),dict):
         return {"ok":True,"task_id":r["task"].get("id"),"reused":False}
@@ -46,12 +61,18 @@ def finish(task_id:str, exit_code:int)->dict:
     # Never overwrite an agent's verified Done / blocked or waiting state.
     if task.get("status") not in ("working",):
         return {"ok":True,"preserved_status":task.get("status")}
-    status="waiting" if exit_code==0 else "blocked"
     previous_summary=str(task.get("summary") or "").strip()
+    # The agent never reported anything: the card carries no information, so
+    # leaving it as "awaiting verification" only clutters the board.
+    untouched=not previous_summary or PLACEHOLDER in previous_summary
+    if untouched and exit_code in QUIET_EXITS:
+        result=remove(task_id)
+        return {"ok":bool(result.get("ok")),"status":"removed"}
+    status="waiting" if exit_code==0 else "blocked"
     summary=("Process exited; awaiting verification. " if exit_code==0
              else "Process failed; inspect before resuming. ")
     # Preserve meaningful model-provided status without displaying private command args.
-    if previous_summary and "Agent started in its private workspace" not in previous_summary:
+    if not untouched:
         summary+=previous_summary[:120]
     summary=summary[:180].strip()
     result=call("loom_task_update",{"task_id":task_id,"status":status,"summary":summary})

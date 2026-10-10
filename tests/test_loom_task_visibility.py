@@ -48,6 +48,26 @@ class Tests(unittest.TestCase):
             return {"ok":True}
         with patch.object(m,"call",side_effect=fake):
             self.assertEqual(m.finish("x",17)["status"],"blocked")
+    def test_untouched_clean_exit_removes_card(self):
+        listing={"ok":True,"tasks":[{"id":"x","status":"working",
+            "summary":"Agent started in its private workspace. Verification pending."}]}
+        for code in (0,130):
+            with patch.object(m,"call",return_value=listing) as req, \
+                 patch.object(m,"remove",return_value={"ok":True}) as rm:
+                self.assertEqual(m.finish("x",code)["status"],"removed")
+                rm.assert_called_once_with("x")
+                self.assertEqual(req.call_count,1)
+    def test_untouched_crash_stays_blocked(self):
+        def fake(name,args):
+            if name=="loom_task_list":
+                return {"ok":True,"tasks":[{"id":"x","status":"working",
+                    "summary":"Agent started in its private workspace. Verification pending."}]}
+            self.assertEqual(args["status"],"blocked")
+            self.assertNotIn("Agent started",args["summary"])
+            return {"ok":True}
+        with patch.object(m,"call",side_effect=fake), patch.object(m,"remove") as rm:
+            self.assertEqual(m.finish("x",1)["status"],"blocked")
+            rm.assert_not_called()
     def test_lost_overlay_is_nonfatal(self):
         with patch.object(m,"call",return_value={"ok":False,"error":"offline"}):
             self.assertFalse(m.start("agy","s",None)["ok"])
