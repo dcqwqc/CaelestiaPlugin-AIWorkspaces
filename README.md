@@ -82,3 +82,23 @@ isolated workspace; it does **not** automatically cover direct binary
 execution, ChatGPT web sessions, or remote agents that bypass the launcher.
 The `loomTaskVisibility` setting defaults to true and can be disabled in
 the plugin's configuration if needed.
+
+## Loom agent cursors
+
+When an agent works in one of Loom's isolated graphical workspaces (see
+`docs/AGENT_INPUT.md` in CaelestiaPlugin-Loom), this plugin shows a small
+live preview of that agent's private display in a corner of the focused
+monitor. The agent's pastel pointer sits at its real position, with a compact
+name tag and click ripples. The layer is fully click-through (empty input
+region), never takes keyboard focus, is not drawn on `AI-*` headless outputs,
+and hides when agents go idle. There is no polling: it watches
+`$XDG_RUNTIME_DIR/loom/agent-cursors.json`.
+
+Settings: show/hide, labels, opacity, animation intensity, preview width,
+corner. Controls (pause/resume/hide/stop per agent):
+
+    qs -c caelestia ipc call loomAgents toggleControls
+    qs -c caelestia ipc call loomAgents pauseAll | resumeAll | hideAll | showAll | list
+
+When an agent session launched through `ai-workspace run` ends, its Loom
+graphical workspaces are released automatically.
