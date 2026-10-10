@@ -63,13 +63,31 @@ Scope {
     readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
     readonly property string serviceCtl: `${Quickshell.env("HOME")}/.local/share/caelestia/plugins/loom/loom_agent_input.py`
 
+    // Agent state from the service. Delegates are keyed by workspace id and the
+    // id lists are only reassigned when their contents change, so tiles (and
+    // their running cursor animations) survive every feed update.
     property var agents: []
+    property var agentById: ({})
+    property var shownIds: []
+    property var viewerIds: []
     property bool viewerOpen: false
     property int liveSeq: 0
     property bool controlsOpen: false
     property bool allHidden: false
+    onAllHiddenChanged: recompute()
 
-    readonly property var shownAgents: agents.filter(a => a.active && !a.hidden && !root.allHidden)
+    function sameList(a: var, b: var): bool {
+        return a.length === b.length && a.every((v, i) => v === b[i]);
+    }
+
+    function recompute(): void {
+        const shown = agents.filter(a => a.active && !a.hidden && !root.allHidden).map(a => a.workspace);
+        if (!sameList(shown, shownIds))
+            shownIds = shown;
+        const viewing = agents.filter(a => a.state !== "crashed").map(a => a.workspace);
+        if (!sameList(viewing, viewerIds))
+            viewerIds = viewing;
+    }
 
     function ctl(command: string, payload: var): void {
         Quickshell.execDetached(["/usr/bin/python3", root.serviceCtl, "ctl", command, JSON.stringify(payload || {})]);
@@ -83,16 +101,25 @@ Scope {
         printErrors: false
         onFileChanged: reload()
         onLoaded: {
+            let list = [];
             try {
                 const data = JSON.parse(text());
-                root.agents = Array.isArray(data.agents) ? data.agents : [];
+                list = Array.isArray(data.agents) ? data.agents : [];
                 root.viewerOpen = !!data.viewerOpen;
                 root.liveSeq = data.liveSeq || 0;
-            } catch (e) {
-                root.agents = [];
-            }
+            } catch (e) {}
+            const by = {};
+            for (const a of list)
+                by[a.workspace] = a;
+            root.agentById = by;
+            root.agents = list;
+            root.recompute();
         }
-        onLoadFailed: root.agents = []
+        onLoadFailed: {
+            root.agents = [];
+            root.agentById = {};
+            root.recompute();
+        }
     }
 
     IpcHandler {
@@ -120,8 +147,8 @@ Scope {
         }
     }
 
-    // Only the focused physical monitor. Per-agent AI-* headless outputs are
-    // never visible to the user, so nothing is drawn there.
+    // Small click-through previews on the focused physical monitor. Hidden
+    // while the full-screen viewer is open (it already shows everything).
     Variants {
         model: Quickshell.screens.filter(s => !String(s.name).startsWith("AI-"))
 
@@ -132,7 +159,7 @@ Scope {
             readonly property bool focusedScreen: (Hypr.focusedMonitor?.name ?? "") === modelData.name
 
             screen: modelData
-            visible: root.enabled && focusedScreen && root.shownAgents.length > 0
+            visible: root.enabled && focusedScreen && !root.viewerOpen && root.shownIds.length > 0
             color: "transparent"
             exclusionMode: ExclusionMode.Ignore
             WlrLayershell.layer: WlrLayer.Overlay
@@ -160,7 +187,7 @@ Scope {
                 spacing: 10
 
                 Repeater {
-                    model: root.shownAgents
+                    model: root.shownIds
 
                     AgentTile {}
                 }
@@ -171,141 +198,41 @@ Scope {
     component AgentTile: Item {
         id: tile
 
-        required property var modelData
-        readonly property color tint: modelData.color || "#C9B8FF"
-        readonly property real sx: width / Math.max(1, modelData.width)
-        readonly property real sy: screenArea.height / Math.max(1, modelData.height)
+        required property string modelData
+        readonly property var agent: root.agentById[modelData] || ({})
+        readonly property color tint: agent.color || "#C9B8FF"
 
         width: root.tileWidth
         height: screenArea.height + caption.height + 4
         opacity: root.cursorOpacity
 
-        StyledClippingRect {
+        Rectangle {
             id: screenArea
 
             width: parent.width
-            height: Math.round(parent.width * tile.modelData.height / Math.max(1, tile.modelData.width))
+            height: Math.round(parent.width * (tile.agent.height || 800) / Math.max(1, tile.agent.width || 1280))
             radius: 10
+            clip: true
             color: Colours.palette.m3surfaceContainer
             border.width: 2
             border.color: Qt.alpha(tile.tint, 0.85)
 
-            Image {
+            LiveImage {
                 anchors.fill: parent
                 anchors.margins: 2
-                source: tile.modelData.preview ? `file://${tile.modelData.preview}?${tile.modelData.previewSeq}` : ""
-                cache: false
-                // Synchronous on purpose: an async reload blanks the old frame
-                // until the next decodes, making the tile flicker see-through.
-                // Previews are ~360px PNGs, refreshed at most every 1.5 s.
-                asynchronous: false
-                smooth: true
-                fillMode: Image.Stretch
-                visible: status === Image.Ready
+                source: tile.agent.preview ? `file://${tile.agent.preview}?${tile.agent.previewSeq}` : ""
             }
 
-            // The agent's real pointer position on its private display.
-            Item {
-                id: pointer
-
-                x: tile.modelData.x * tile.sx
-                y: tile.modelData.y * tile.sy
-                z: 2
-
-                Behavior on x {
-                    enabled: root.motionScale > 0
-                    NumberAnimation {
-                        duration: Math.max(80, tile.modelData.moveMs) * root.motionScale
-                        easing.type: Easing.InOutCubic
-                    }
-                }
-                Behavior on y {
-                    enabled: root.motionScale > 0
-                    NumberAnimation {
-                        duration: Math.max(80, tile.modelData.moveMs) * root.motionScale
-                        easing.type: Easing.InOutCubic
-                    }
-                }
-
-                Rectangle {
-                    id: ripple
-
-                    width: 26
-                    height: 26
-                    radius: 13
-                    x: -13
-                    y: -13
-                    color: "transparent"
-                    border.width: 2
-                    border.color: tile.tint
-                    opacity: 0
-                    scale: 0.3
-
-                    ParallelAnimation {
-                        id: rippleAnim
-
-                        NumberAnimation { target: ripple; property: "scale"; from: 0.3; to: 1.4; duration: 380; easing.type: Easing.OutCubic }
-                        NumberAnimation { target: ripple; property: "opacity"; from: 0.9; to: 0; duration: 380; easing.type: Easing.OutCubic }
-                    }
-                }
-
-                Shape {
-                    width: 12
-                    height: 17
-                    preferredRendererType: Shape.CurveRenderer
-
-                    ShapePath {
-                        fillColor: tile.tint
-                        strokeColor: Qt.darker(tile.tint, 2.4)
-                        strokeWidth: 1.2
-                        joinStyle: ShapePath.RoundJoin
-                        PathSvg { path: "M 0 0 L 0 14 L 3.6 10.6 L 6.4 16.4 L 8.6 15.4 L 5.9 9.7 L 10.8 9.7 Z" }
-                    }
-                }
-
-                Rectangle {
-                    visible: root.showLabels
-                    // Flip inward near the tile's right/bottom edges so the tag is never clipped.
-                    x: pointer.x + 12 + width > screenArea.width ? -width - 2 : 12
-                    y: pointer.y + 12 + height > screenArea.height ? -height - 2 : 12
-                    width: nameText.implicitWidth + 10
-                    height: nameText.implicitHeight + 4
-                    radius: height / 2
-                    color: Qt.alpha(tile.tint, 0.92)
-
-                    StyledText {
-                        id: nameText
-
-                        anchors.centerIn: parent
-                        text: tile.modelData.name
-                        font.pointSize: 7.5
-                        font.weight: 600
-                        color: Qt.darker(tile.tint, 3.2)
-                    }
-                }
+            PathPointer {
+                agent: tile.agent
+                sx: screenArea.width / Math.max(1, tile.agent.width || 1)
+                sy: screenArea.height / Math.max(1, tile.agent.height || 1)
+                arrowScale: 1
+                bounds: Qt.size(screenArea.width, screenArea.height)
             }
 
-            property int lastClick: tile.modelData.clickSeq
-            onLastClickChanged: if (root.motionScale > 0) rippleAnim.restart()
-
-            Rectangle {
-                visible: tile.modelData.state !== "ready"
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.margins: 6
-                width: stateText.implicitWidth + 12
-                height: stateText.implicitHeight + 4
-                radius: height / 2
-                color: tile.modelData.state === "crashed" ? Colours.palette.m3errorContainer : Colours.palette.m3secondaryContainer
-
-                StyledText {
-                    id: stateText
-
-                    anchors.centerIn: parent
-                    text: tile.modelData.state
-                    font.pointSize: 7.5
-                    color: tile.modelData.state === "crashed" ? Colours.palette.m3onErrorContainer : Colours.palette.m3onSecondaryContainer
-                }
+            StateBadge {
+                agent: tile.agent
             }
         }
 
@@ -325,7 +252,7 @@ Scope {
             }
 
             StyledText {
-                text: `${tile.modelData.name} · ${tile.modelData.label || tile.modelData.kind}`
+                text: `${tile.agent.name || ""} · ${tile.agent.label || tile.agent.kind || ""}`
                 font.pointSize: 8
                 color: Colours.palette.m3onSurface
                 elide: Text.ElideRight
@@ -334,40 +261,220 @@ Scope {
         }
     }
 
-    // Full-screen live view of every agent workspace. A real toplevel so it
-    // can live on its own special workspace (special:loom-agents, SUPER+A via
-    // hypr-user.lua). The service streams frames only while that special
-    // workspace is open, so this costs nothing while hidden. View only: input
-    // here never reaches an agent's display.
+    // The agent's pointer, animated along the exact curved path the service
+    // drives the real pointer through (published per move as `path`), so it
+    // moves like a hand rather than gliding in a straight line.
+    component PathPointer: Item {
+        id: ptr
+
+        property var agent: ({})
+        property real sx: 1
+        property real sy: 1
+        property real arrowScale: 1
+        property size bounds: Qt.size(0, 0)
+        property var path: []
+        property real t: 1
+        readonly property color tint: agent.color || "#C9B8FF"
+        readonly property point pos: pointAt(t, agent.x, agent.y)
+
+        function pointAt(t: real, fx: real, fy: real): point {
+            const p = path;
+            if (!p || p.length < 2 || t >= 1)
+                return Qt.point(fx || 0, fy || 0);
+            const f = Math.max(0, t) * (p.length - 1);
+            const i = Math.floor(f);
+            const r = f - i;
+            const a = p[i];
+            const b = p[Math.min(i + 1, p.length - 1)];
+            return Qt.point(a[0] + (b[0] - a[0]) * r, a[1] + (b[1] - a[1]) * r);
+        }
+
+        property int moveSeq: agent.moveSeq || 0
+        onMoveSeqChanged: {
+            path = agent.path || [];
+            const ms = (agent.moveMs || 0) * root.motionScale;
+            if (ms < 16 || path.length < 2) {
+                walk.stop();
+                t = 1;
+                return;
+            }
+            walk.duration = ms;
+            walk.restart();
+        }
+
+        property int clicks: agent.clickSeq || 0
+        onClicksChanged: if (root.motionScale > 0) ripple.play()
+
+        NumberAnimation {
+            id: walk
+
+            target: ptr
+            property: "t"
+            from: 0
+            to: 1
+            easing.type: Easing.Linear  // the path samples already carry the hand's speed profile
+        }
+
+        x: pos.x * sx
+        y: pos.y * sy
+        z: 2
+
+        Rectangle {
+            id: ripple
+
+            function play(): void {
+                rippleAnim.restart();
+            }
+
+            width: 26 * ptr.arrowScale
+            height: width
+            radius: width / 2
+            x: -width / 2
+            y: -height / 2
+            color: "transparent"
+            border.width: 2 * ptr.arrowScale
+            border.color: ptr.tint
+            opacity: 0
+
+            ParallelAnimation {
+                id: rippleAnim
+
+                NumberAnimation { target: ripple; property: "scale"; from: 0.3; to: 1.4; duration: 380; easing.type: Easing.OutCubic }
+                NumberAnimation { target: ripple; property: "opacity"; from: 0.9; to: 0; duration: 380; easing.type: Easing.OutCubic }
+            }
+        }
+
+        Shape {
+            width: 12
+            height: 17
+            scale: ptr.arrowScale
+            transformOrigin: Item.TopLeft
+            preferredRendererType: Shape.CurveRenderer
+
+            ShapePath {
+                fillColor: ptr.tint
+                strokeColor: Qt.darker(ptr.tint, 2.4)
+                strokeWidth: 1.2
+                joinStyle: ShapePath.RoundJoin
+                PathSvg { path: "M 0 0 L 0 14 L 3.6 10.6 L 6.4 16.4 L 8.6 15.4 L 5.9 9.7 L 10.8 9.7 Z" }
+            }
+        }
+
+        Rectangle {
+            visible: root.showLabels
+            readonly property real off: 12 * ptr.arrowScale
+            // Flip inward near the right/bottom edges so the tag is never clipped.
+            x: ptr.x + off + width > ptr.bounds.width ? -width - 2 : off
+            y: ptr.y + off + height > ptr.bounds.height ? -height - 2 : off
+            width: nameText.implicitWidth + 10 * ptr.arrowScale
+            height: nameText.implicitHeight + 4 * ptr.arrowScale
+            radius: height / 2
+            color: Qt.alpha(ptr.tint, 0.92)
+
+            StyledText {
+                id: nameText
+
+                anchors.centerIn: parent
+                text: ptr.agent.name || ""
+                font.pointSize: 7.5 * Math.min(1.4, ptr.arrowScale)
+                font.weight: 600
+                color: Qt.darker(ptr.tint, 3.2)
+            }
+        }
+    }
+
+    // Double-buffered image: the next frame decodes off the UI thread into the
+    // hidden buffer and is swapped in only when ready, so frames never flash
+    // and never stall the shell.
+    component LiveImage: Item {
+        id: live
+
+        property string source
+        property int fillMode: Image.Stretch
+        property bool aFront: true
+
+        onSourceChanged: (aFront ? imgB : imgA).source = source
+
+        Image {
+            id: imgA
+
+            anchors.fill: parent
+            asynchronous: true
+            cache: false
+            smooth: true
+            fillMode: live.fillMode
+            visible: live.aFront && status === Image.Ready
+            onStatusChanged: if (status === Image.Ready && !live.aFront) live.aFront = true
+        }
+
+        Image {
+            id: imgB
+
+            anchors.fill: parent
+            asynchronous: true
+            cache: false
+            smooth: true
+            fillMode: live.fillMode
+            visible: !live.aFront && status === Image.Ready
+            onStatusChanged: if (status === Image.Ready && live.aFront) live.aFront = false
+        }
+    }
+
+    component StateBadge: Rectangle {
+        property var agent: ({})
+
+        visible: (agent.state || "ready") !== "ready"
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.margins: 6
+        width: stateText.implicitWidth + 12
+        height: stateText.implicitHeight + 4
+        radius: height / 2
+        color: agent.state === "crashed" ? Colours.palette.m3errorContainer : Colours.palette.m3secondaryContainer
+
+        StyledText {
+            id: stateText
+
+            anchors.centerIn: parent
+            text: parent.agent.state || ""
+            font.pointSize: 7.5
+            color: parent.agent.state === "crashed" ? Colours.palette.m3onErrorContainer : Colours.palette.m3onSecondaryContainer
+        }
+    }
+
+    // Full-screen live view of every agent workspace (special:loom-agents,
+    // SUPER+A; fullscreen via the window rule in hypr-user.lua). The service
+    // streams frames only while that special workspace is open. View only:
+    // input here never reaches an agent's display.
     FloatingWindow {
         id: viewer
 
-        readonly property var shown: root.agents.filter(a => a.state !== "crashed")
-        readonly property int cols: Math.min(shown.length, Math.max(3, Math.ceil(Math.sqrt(shown.length))))
-        readonly property int rows: Math.max(1, Math.ceil(shown.length / Math.max(1, cols)))
+        readonly property int n: root.viewerIds.length
+        readonly property int cols: Math.min(n, Math.max(3, Math.ceil(Math.sqrt(n))))
+        readonly property int rows: Math.max(1, Math.ceil(n / Math.max(1, cols)))
+        readonly property real gap: n > 1 ? 6 : 0
 
         title: "Loom Agents"
-        visible: root.enabled && shown.length > 0
-        color: "#0e0e12"
+        visible: root.enabled && n > 0
+        color: "black"
         implicitWidth: 1280
         implicitHeight: 800
 
         Repeater {
-            model: viewer.shown
+            model: root.viewerIds
 
             AgentStage {
-                required property var modelData
+                required property string modelData
                 required property int index
                 readonly property int row: Math.floor(index / viewer.cols)
-                readonly property int inRow: Math.min(viewer.cols, viewer.shown.length - row * viewer.cols)
+                readonly property int inRow: Math.min(viewer.cols, viewer.n - row * viewer.cols)
                 readonly property int col: index - row * viewer.cols
-                readonly property real gap: 8
 
-                agent: modelData
-                width: (viewer.width - gap * (inRow + 1)) / inRow
-                height: (viewer.height - gap * (viewer.rows + 1)) / viewer.rows
-                x: gap + col * (width + gap)
-                y: gap + row * (height + gap)
+                agent: root.agentById[modelData] || ({})
+                width: (viewer.width - viewer.gap * (inRow - 1)) / inRow
+                height: (viewer.height - viewer.gap * (viewer.rows - 1)) / viewer.rows
+                x: col * (width + viewer.gap)
+                y: row * (height + viewer.gap)
             }
         }
     }
@@ -375,101 +482,67 @@ Scope {
     component AgentStage: Item {
         id: stage
 
-        property var agent
+        property var agent: ({})
         readonly property color tint: agent.color || "#C9B8FF"
-        readonly property string frame: root.viewerOpen && agent.live ? agent.live : agent.preview
-        // Letterboxed area the agent's display occupies inside this cell.
-        readonly property real fit: Math.min(width / Math.max(1, agent.width), (height - 30) / Math.max(1, agent.height))
-        readonly property real dw: agent.width * fit
-        readonly property real dh: agent.height * fit
+        readonly property real aw: Math.max(1, agent.width || 1280)
+        readonly property real ah: Math.max(1, agent.height || 800)
+        // Fill edge to edge when the shapes nearly match (the default 16:10
+        // display on a 16:10 panel); letterbox only for a real mismatch.
+        readonly property bool stretch: Math.abs((width / Math.max(1, height)) / (aw / ah) - 1) < 0.06
+        readonly property real fx: stretch ? width / aw : Math.min(width / aw, height / ah)
+        readonly property real fy: stretch ? height / ah : fx
 
-        Rectangle {
+        clip: true
+
+        Item {
             id: screen
 
-            x: (stage.width - stage.dw) / 2
-            y: (stage.height - 30 - stage.dh) / 2
-            width: stage.dw
-            height: stage.dh
-            color: "#000"
-            radius: 10
-            border.width: 2
-            border.color: Qt.alpha(stage.tint, 0.9)
-            clip: true
+            x: (stage.width - stage.aw * stage.fx) / 2
+            y: (stage.height - stage.ah * stage.fy) / 2
+            width: stage.aw * stage.fx
+            height: stage.ah * stage.fy
 
-            Image {
+            LiveImage {
                 anchors.fill: parent
-                anchors.margins: 2
-                source: stage.frame ? `file://${stage.frame}?${root.liveSeq}-${stage.agent.previewSeq}` : ""
-                cache: false
-                asynchronous: false
-                smooth: true
-                fillMode: Image.Stretch
+                readonly property string frame: root.viewerOpen && stage.agent.live ? stage.agent.live : (stage.agent.preview || "")
+                source: frame ? `file://${frame}?${root.liveSeq}-${stage.agent.previewSeq}` : ""
             }
 
-            Item {
-                id: bigPointer
-
-                x: stage.agent.x * stage.fit
-                y: stage.agent.y * stage.fit
-                Behavior on x { NumberAnimation { duration: Math.max(80, stage.agent.moveMs) * root.motionScale; easing.type: Easing.InOutCubic } }
-                Behavior on y { NumberAnimation { duration: Math.max(80, stage.agent.moveMs) * root.motionScale; easing.type: Easing.InOutCubic } }
-
-                Rectangle {
-                    id: bigRipple
-                    width: 44; height: 44; radius: 22; x: -22; y: -22
-                    color: "transparent"; border.width: 3; border.color: stage.tint; opacity: 0
-                    ParallelAnimation {
-                        id: bigRippleAnim
-                        NumberAnimation { target: bigRipple; property: "scale"; from: 0.3; to: 1.5; duration: 420; easing.type: Easing.OutCubic }
-                        NumberAnimation { target: bigRipple; property: "opacity"; from: 0.9; to: 0; duration: 420; easing.type: Easing.OutCubic }
-                    }
-                }
-
-                Shape {
-                    width: 20; height: 28
-                    scale: 1.6
-                    transformOrigin: Item.TopLeft
-                    preferredRendererType: Shape.CurveRenderer
-                    ShapePath {
-                        fillColor: stage.tint
-                        strokeColor: Qt.darker(stage.tint, 2.4)
-                        strokeWidth: 1.2
-                        joinStyle: ShapePath.RoundJoin
-                        PathSvg { path: "M 0 0 L 0 14 L 3.6 10.6 L 6.4 16.4 L 8.6 15.4 L 5.9 9.7 L 10.8 9.7 Z" }
-                    }
-                }
-
-                Rectangle {
-                    x: 20; y: 22
-                    width: bigName.implicitWidth + 14
-                    height: bigName.implicitHeight + 6
-                    radius: height / 2
-                    color: Qt.alpha(stage.tint, 0.95)
-                    StyledText {
-                        id: bigName
-                        anchors.centerIn: parent
-                        text: stage.agent.name
-                        font.pointSize: 10
-                        font.weight: 600
-                        color: Qt.darker(stage.tint, 3.2)
-                    }
-                }
+            PathPointer {
+                agent: stage.agent
+                sx: stage.fx
+                sy: stage.fy
+                arrowScale: 1.7
+                bounds: Qt.size(screen.width, screen.height)
             }
-
-            property int clicks: stage.agent.clickSeq
-            onClicksChanged: if (root.motionScale > 0) bigRippleAnim.restart()
         }
 
-        Row {
+        StateBadge {
+            agent: stage.agent
+        }
+
+        // Caption floats over the picture instead of reserving a strip.
+        Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            spacing: 8
+            anchors.bottomMargin: 10
+            width: capRow.implicitWidth + 20
+            height: capRow.implicitHeight + 8
+            radius: height / 2
+            color: Qt.rgba(0, 0, 0, 0.45)
 
-            Rectangle { width: 10; height: 10; radius: 5; anchors.verticalCenter: parent.verticalCenter; color: stage.tint }
-            StyledText {
-                text: `${stage.agent.name} · ${stage.agent.label || stage.agent.kind} · ${stage.agent.state}${root.viewerOpen && stage.agent.live ? " · live" : ""}`
-                font.pointSize: 10
-                color: "#e6e0e9"
+            Row {
+                id: capRow
+
+                anchors.centerIn: parent
+                spacing: 8
+
+                Rectangle { width: 9; height: 9; radius: 4.5; anchors.verticalCenter: parent.verticalCenter; color: stage.tint }
+                StyledText {
+                    text: `${stage.agent.name || ""} · ${stage.agent.label || stage.agent.kind || ""}${root.viewerOpen && stage.agent.live ? " · live" : ""}`
+                    font.pointSize: 9.5
+                    color: "white"
+                }
             }
         }
     }
