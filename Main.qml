@@ -16,13 +16,11 @@ import qs.utils
 // Qt caches plugin directory listings: a newly added QML file is not found by
 // hot reload until the whole shell restarts, which would also restart Loom.
 //
-// Agents work on private displays, never on the user's desktop, so their
-// pointers are drawn where they really are: inside small live previews of
-// those displays. The preview stack is a click-through overlay (empty input
-// mask); the only interactive surface is the controls panel the user opens
-// explicitly (`qs -c caelestia ipc call loomAgents toggleControls`).
+// Agent previews use the same scaled coordinate space as the source display.
+// Their tiny headers offer drag, pin and dock controls, but they never forward
+// mouse or keyboard events to the isolated agent display.
 //
-// The service writes $XDG_RUNTIME_DIR/loom/agent-cursors.json on change; this
+// // The service writes $XDG_RUNTIME_DIR/loom/agent-cursors.json on change; this
 // file is watched, never polled.
 Scope {
     id: root
@@ -58,6 +56,12 @@ Scope {
     readonly property string animation: settings ? settings.agentCursorAnimation : "full"
     readonly property int tileWidth: settings ? settings.agentCursorTileWidth : 240
     readonly property string corner: settings ? settings.agentCursorPosition : "bottom-right"
+    // Persistent floating-card state, independent of cursor activity.
+    readonly property bool pinned: (settings?.agentCursorPinned ?? true)
+    readonly property bool docked: (settings?.agentCursorDocked ?? false)
+    readonly property int floatingX: (settings?.agentCursorFloatingX ?? -1)
+    readonly property int floatingY: (settings?.agentCursorFloatingY ?? -1)
+    onPinnedChanged: recompute()
 
     readonly property real motionScale: animation === "off" ? 0 : animation === "subtle" ? 0.6 : 1
     readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
@@ -81,7 +85,7 @@ Scope {
     }
 
     function recompute(): void {
-        const shown = agents.filter(a => a.active && !a.hidden && !root.allHidden).map(a => a.workspace);
+        const shown = agents.filter(a => (a.active || root.pinned) && !a.hidden && !root.allHidden).map(a => a.workspace);
         if (!sameList(shown, shownIds))
             shownIds = shown;
         // Nested-Hyprland agents are their own native windows on special:loom-agents;
@@ -133,6 +137,31 @@ Scope {
         function hideAll(): void {
             root.allHidden = true;
         }
+        function previewState(): string {
+            return JSON.stringify({
+                pinned: root.pinned, docked: root.docked,
+                floatingX: root.floatingX, floatingY: root.floatingY,
+                settingsLoaded: !!root.settings,
+                settingsSupportsPin: root.settings?.agentCursorPinned !== undefined
+            });
+        }
+        function dockTopLeft(): void {
+            if (root.settings) root.settings.agentCursorDocked = true;
+        }
+        function undock(): void {
+            if (root.settings) root.settings.agentCursorDocked = false;
+        }
+        function pinPreviews(): void {
+            if (root.settings) root.settings.agentCursorPinned = true;
+        }
+        function unpinPreviews(): void {
+            if (root.settings) root.settings.agentCursorPinned = false;
+        }
+        function resetPreviewPosition(): void {
+            if (!root.settings) return;
+            root.settings.agentCursorFloatingX = -1;
+            root.settings.agentCursorFloatingY = -1;
+        }
         function showAll(): void {
             root.allHidden = false;
         }
@@ -149,8 +178,8 @@ Scope {
         }
     }
 
-    // Small click-through previews on the focused physical monitor. Hidden
-    // while the full-screen viewer is open (it already shows everything).
+    // Draggable workspace mini-windows on the focused physical monitor.
+    // Neither the header nor the preview forwards input into an agent.
     Variants {
         model: Quickshell.screens.filter(s => !String(s.name).startsWith("AI-"))
 
@@ -159,6 +188,12 @@ Scope {
 
             required property ShellScreen modelData
             readonly property bool focusedScreen: (Hypr.focusedMonitor?.name ?? "") === modelData.name
+            readonly property real defaultX: root.corner.endsWith("right") ? modelData.width - root.tileWidth - 22 : 22
+            readonly property real defaultY: root.corner.startsWith("bottom") ? modelData.height - implicitHeight - 24 : 58
+            readonly property real placementX: Math.max(10, Math.min(Math.max(10, modelData.width - root.tileWidth - 10),
+                root.docked ? 16 : root.floatingX >= 0 ? root.floatingX : defaultX))
+            readonly property real placementY: Math.max(10, Math.min(Math.max(10, modelData.height - implicitHeight - 10),
+                root.docked ? 60 : root.floatingY >= 0 ? root.floatingY : defaultY))
 
             screen: modelData
             visible: root.enabled && focusedScreen && !root.viewerOpen && root.shownIds.length > 0
@@ -167,31 +202,35 @@ Scope {
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "loom-agent-cursors"
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-            // Empty input region: every click passes through to the user's windows.
-            mask: Region {}
-
-            anchors.bottom: root.corner.startsWith("bottom")
-            anchors.top: root.corner.startsWith("top")
-            anchors.right: root.corner.endsWith("right")
-            anchors.left: root.corner.endsWith("left")
-            margins.bottom: 18
-            margins.top: 18
-            margins.right: 18
-            margins.left: 18
+            // Non-empty input region: the card can now be moved/docked/pinned.
+            // No focus change and no clicks are sent to the private workspace.
+            anchors.top: true
+            anchors.left: true
+            margins.left: Math.round(placementX)
+            margins.top: Math.round(placementY)
 
             implicitWidth: root.tileWidth
             implicitHeight: Math.max(1, stack.implicitHeight)
 
             Column {
                 id: stack
-
                 width: root.tileWidth
-                spacing: 10
+                spacing: 12
 
                 Repeater {
                     model: root.shownIds
 
-                    AgentTile {}
+                    AgentTile {
+                        onDragRequested: (dx, dy) => {
+                            if (!root.settings)
+                                return;
+                            root.settings.agentCursorFloatingX = Math.round(Math.max(10,
+                                Math.min(overlay.modelData.width - root.tileWidth - 10, overlay.placementX + dx)));
+                            root.settings.agentCursorFloatingY = Math.round(Math.max(10,
+                                Math.min(overlay.modelData.height - overlay.implicitHeight - 10, overlay.placementY + dy)));
+                            root.settings.agentCursorDocked = false;
+                        }
+                    }
                 }
             }
         }
@@ -201,28 +240,56 @@ Scope {
         id: tile
 
         required property string modelData
+        signal dragRequested(real dx, real dy)
         readonly property var agent: root.agentById[modelData] || ({})
         readonly property color tint: agent.color || "#C9B8FF"
 
         width: root.tileWidth
-        height: screenArea.height + caption.height + 4
+        height: screenArea.height + 49
         opacity: root.cursorOpacity
 
+        // Soft grounding shadow and a broad pastel halo.
         Rectangle {
-            id: screenArea
+            x: 1; y: 8
+            width: tile.width; height: tile.height
+            radius: 25
+            color: "#33000000"
+        }
+        Rectangle {
+            x: -3; y: -3
+            width: tile.width + 6; height: tile.height + 6
+            radius: 26
+            color: Qt.alpha(tile.tint, 0.10)
+            border.width: 1
+            border.color: Qt.alpha(tile.tint, 0.3)
+        }
+        Rectangle {
+            anchors.fill: parent
+            radius: 22
+            color: Colours.palette.m3surfaceContainer
+            border.width: 1
+            border.color: Qt.alpha(tile.tint, 0.62)
+            gradient: Gradient {
+                GradientStop { position: 0; color: Qt.alpha(tile.tint, 0.17) }
+                GradientStop { position: 0.28; color: Colours.palette.m3surfaceContainer }
+                GradientStop { position: 1; color: Colours.palette.m3surfaceContainer }
+            }
+        }
 
-            width: parent.width
-            height: Math.round(parent.width * (tile.agent.height || 800) / Math.max(1, tile.agent.width || 1280))
-            radius: 10
+        StyledClippingRect {
+            id: screenArea
+            x: 7
+            y: 7
+            width: parent.width - 14
+            height: Math.round(width * Math.max(1, tile.agent.height || 800) / Math.max(1, tile.agent.width || 1280))
+            radius: 16
             clip: true
             color: Colours.palette.m3surfaceContainer
-            border.width: 2
-            border.color: Qt.alpha(tile.tint, 0.85)
 
+            // Screen and cursor share the exact same scaled coordinate space.
             LiveImage {
                 anchors.fill: parent
-                anchors.margins: 2
-                source: tile.agent.preview ? `file://${tile.agent.preview}?${tile.agent.previewSeq}` : ""
+                source: tile.agent.preview ? "file://" + tile.agent.preview + "?" + tile.agent.previewSeq : ""
             }
 
             PathPointer {
@@ -230,35 +297,85 @@ Scope {
                 sx: screenArea.width / Math.max(1, tile.agent.width || 1)
                 sy: screenArea.height / Math.max(1, tile.agent.height || 1)
                 arrowScale: 1
+                showTag: false
                 bounds: Qt.size(screenArea.width, screenArea.height)
             }
 
-            StateBadge {
-                agent: tile.agent
-            }
+            StateBadge { agent: tile.agent }
         }
 
-        Row {
+        Item {
             id: caption
+            x: 10
+            y: screenArea.y + screenArea.height + 4
+            width: parent.width - 20
+            height: 32
 
-            anchors.top: screenArea.bottom
-            anchors.topMargin: 4
-            spacing: 6
+            Row {
+                anchors.fill: parent
+                spacing: 7
 
-            Rectangle {
-                width: 8
-                height: 8
-                radius: 4
-                anchors.verticalCenter: parent.verticalCenter
-                color: tile.tint
-            }
+                Rectangle {
+                    width: 7; height: 7; radius: 3.5
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: tile.tint
+                }
+                Item {
+                    width: Math.max(30, caption.width - 71)
+                    height: caption.height
 
-            StyledText {
-                text: `${tile.agent.name || ""} · ${tile.agent.label || tile.agent.kind || ""}`
-                font.pointSize: 8
-                color: Colours.palette.m3onSurface
-                elide: Text.ElideRight
-                width: root.tileWidth - 20
+                    StyledText {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width
+                        text: tile.agent.name || "AI Workspace"
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                        font.pointSize: 8.5
+                        font.weight: 600
+                        color: Colours.palette.m3onSurface
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton
+                        cursorShape: Qt.SizeAllCursor
+                        property real startX: 0
+                        property real startY: 0
+                        onPressed: mouse => {
+                            startX = mouse.x;
+                            startY = mouse.y;
+                        }
+                        onPositionChanged: mouse => {
+                            if (pressed)
+                                tile.dragRequested(mouse.x - startX, mouse.y - startY);
+                        }
+                    }
+                }
+                Item {
+                    width: 24; height: caption.height
+                    MaterialIcon {
+                        anchors.centerIn: parent
+                        text: root.pinned ? "push_pin" : "keep_off"
+                        color: root.pinned ? tile.tint : Colours.palette.m3onSurfaceVariant
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.settings) root.settings.agentCursorPinned = !root.pinned
+                    }
+                }
+                Item {
+                    width: 24; height: caption.height
+                    MaterialIcon {
+                        anchors.centerIn: parent
+                        text: root.docked ? "open_in_new" : "north_west"
+                        color: root.docked ? tile.tint : Colours.palette.m3onSurfaceVariant
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.settings) root.settings.agentCursorDocked = !root.docked
+                    }
+                }
             }
         }
     }
@@ -273,6 +390,7 @@ Scope {
         property real sx: 1
         property real sy: 1
         property real arrowScale: 1
+        property bool showTag: true
         property size bounds: Qt.size(0, 0)
         property var path: []
         property real t: 1
@@ -363,12 +481,12 @@ Scope {
         }
 
         Rectangle {
-            visible: root.showLabels
+            visible: root.showLabels && ptr.showTag
             readonly property real off: 12 * ptr.arrowScale
             // Flip inward near the right/bottom edges so the tag is never clipped.
             x: ptr.x + off + width > ptr.bounds.width ? -width - 2 : off
             y: ptr.y + off + height > ptr.bounds.height ? -height - 2 : off
-            width: nameText.implicitWidth + 10 * ptr.arrowScale
+            width: Math.min(nameText.implicitWidth + 10 * ptr.arrowScale, Math.max(48, ptr.bounds.width - 12))
             height: nameText.implicitHeight + 4 * ptr.arrowScale
             radius: height / 2
             color: Qt.alpha(ptr.tint, 0.92)
@@ -378,6 +496,9 @@ Scope {
 
                 anchors.centerIn: parent
                 text: ptr.agent.name || ""
+                width: Math.max(1, parent.width - 10 * ptr.arrowScale)
+                elide: Text.ElideRight
+                maximumLineCount: 1
                 font.pointSize: 7.5 * Math.min(1.4, ptr.arrowScale)
                 font.weight: 600
                 color: Qt.darker(ptr.tint, 3.2)

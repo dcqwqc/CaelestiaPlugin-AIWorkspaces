@@ -84,7 +84,7 @@ SettingsObject {
     property bool agentCursors: true
     SettingMeta on agentCursors {
         label: "Show AI agent cursors"
-        description: "Small click-through previews of each active agent's private display with its pointer. Hidden while agents are idle."
+        description: "Small interactive cards of an agent's private display. Pin them to keep them visible while idle."
         icon: "arrow_selector_tool"
         inputType: SettingMeta.Switch
     }
@@ -120,13 +120,33 @@ SettingsObject {
     property int agentCursorTileWidth: 240
     SettingMeta on agentCursorTileWidth {
         label: "Agent preview width"
-        description: "Width of each agent preview in logical pixels."
+        description: "Width of the draggable workspace card in logical pixels."
         icon: "width"
         inputType: SettingMeta.SpinBox
         min: 160
         max: 400
         step: 20
     }
+
+    property bool agentCursorPinned: true
+    SettingMeta on agentCursorPinned {
+        label: "Pin agent workspace cards"
+        description: "Keep cards visible even after the agent becomes idle."
+        icon: "push_pin"
+        inputType: SettingMeta.Switch
+    }
+
+    property bool agentCursorDocked: false
+    SettingMeta on agentCursorDocked {
+        label: "Dock workspace cards top left"
+        description: "Snap previews beneath the top bar, or release them to their floating position."
+        icon: "north_west"
+        inputType: SettingMeta.Switch
+    }
+
+    // Updated by dragging the title of a preview; -1 uses the corner setting.
+    property int agentCursorFloatingX: -1
+    property int agentCursorFloatingY: -1
 
     property string agentCursorPosition: "bottom-right"
     SettingMeta on agentCursorPosition {

@@ -88,17 +88,42 @@ the plugin's configuration if needed.
 When an agent works in one of Loom's isolated graphical workspaces (see
 `docs/AGENT_INPUT.md` in CaelestiaPlugin-Loom), this plugin (Main.qml) shows a small
 live preview of that agent's private display in a corner of the focused
-monitor. The agent's pastel pointer sits at its real position, with a compact
-name tag and click ripples. The layer is fully click-through (empty input
-region), never takes keyboard focus, is not drawn on `AI-*` headless outputs,
-and hides when agents go idle. There is no polling: it watches
-`$XDG_RUNTIME_DIR/loom/agent-cursors.json`.
+monitor. The pointer is drawn at the agent's scaled workspace position,
+with click ripples. The card accepts clicks for its own drag, pin and dock
+controls without forwarding input into the private agent display or taking
+keyboard focus. It never renders on the AI-* headless outputs and stays
+visible while an agent is idle when pinned (the default). Its state updates
+from the Loom agent-cursors.json feed without UI polling.
 
-Settings: show/hide, labels, opacity, animation intensity, preview width,
-corner. Controls (pause/resume/hide/stop per agent):
+Settings: show/hide, pin, dock, labels, opacity, animation intensity,
+preview width, default corner and saved floating position. Controls (pause/resume/hide/stop per agent):
 
     qs -c caelestia ipc call loomAgents toggleControls
     qs -c caelestia ipc call loomAgents pauseAll | resumeAll | hideAll | showAll | list
 
 When an agent session launched through `ai-workspace run` ends, its Loom
 graphical workspaces are released automatically.
+
+
+## Floating preview cards
+
+The agent preview now sits in a compact, rounded Caelestia card with an
+accent-colored halo, soft shadow and one-line title. Drag the **title area**
+to reposition it (the floating position persists). Use the **pin** control to
+keep a card present while its agent is idle; pinned is the default. The
+**north-west** action docks the card to the top-left area below the shell bar,
+and changes to an undock action while docked.
+
+The preview's own header accepts pointer input but **does not control**
+the agent's private workspace. Its displayed pixels are still captured by
+Loom: pinning keeps the most recent screenshot in view; it does not turn a
+periodic screenshot feed into a continuous real-time video stream.
+
+
+QuickShell IPC controls:
+
+    qs -c caelestia ipc --any-display call loomAgents previewState
+    qs -c caelestia ipc --any-display call loomAgents pinPreviews
+    qs -c caelestia ipc --any-display call loomAgents dockTopLeft
+    qs -c caelestia ipc --any-display call loomAgents undock
+    qs -c caelestia ipc --any-display call loomAgents resetPreviewPosition
