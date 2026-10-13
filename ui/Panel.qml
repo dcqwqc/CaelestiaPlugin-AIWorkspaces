@@ -16,9 +16,12 @@ Item {
 
     readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
     property string presentation: "integrated"
+    property bool previewsEnabled: true
+    property bool pinned: true
     property var agents: []
+    readonly property var visibleAgents: agents.filter(a => pinned || a.active)
     property bool expanded: false
-    readonly property var agent: agents.length ? agents[0] : ({})
+    readonly property var agent: visibleAgents.length ? visibleAgents[0] : ({})
     readonly property color accent: agent.color || Colours.palette.m3primary
     readonly property real imageAspect: Math.max(1, agent.height || 800) / Math.max(1, agent.width || 1280)
     readonly property int previewHeight: Math.max(90, Math.min(164, Math.round((panelWidth - 20) * imageAspect)))
@@ -37,7 +40,7 @@ Item {
     // ShellPanels.qml consumes these properties and draws a native joined
     // panel; there is no independent always-on-top Wayland overlay surface.
     readonly property bool panelVisible: screen !== null && focusedScreen
-        && !hasFullscreen && presentation === "integrated" && agents.length > 0
+        && previewsEnabled && !hasFullscreen && presentation === "integrated" && visibleAgents.length > 0
     readonly property bool panelInputEnabled: true
     readonly property real panelDeformAmount: 0
     readonly property real panelEdgeOffset: 0
@@ -62,6 +65,8 @@ Item {
             try {
                 const data = JSON.parse(text());
                 root.presentation = data.mode === "floating" ? "floating" : "integrated";
+                root.previewsEnabled = data.enabled !== false;
+                root.pinned = data.pinned !== false;
             } catch (error) {
                 root.presentation = "integrated";
             }
@@ -139,13 +144,32 @@ Item {
 
         StyledText {
             anchors.verticalCenter: parent.verticalCenter
-            width: root.expanded ? Math.max(30, root.width - 112) : 24
-            text: root.expanded ? (root.agent.name || "AI Workspace") : String(root.agents.length)
+            width: root.expanded ? Math.max(30, root.width - 148) : 24
+            text: root.expanded ? (root.agent.name || "AI Workspace") : String(root.visibleAgents.length)
             elide: Text.ElideRight
             maximumLineCount: 1
             font.pointSize: 9
             color: Colours.palette.m3onSurface
             font.weight: 600
+        }
+    }
+
+    Item {
+        visible: root.expanded
+        x: root.width - 91
+        y: 6
+        width: 26
+        height: 30
+
+        MaterialIcon {
+            anchors.centerIn: parent
+            text: root.pinned ? "push_pin" : "keep_off"
+            color: root.pinned ? root.accent : Colours.palette.m3onSurfaceVariant
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.command(root.pinned ? "unpinPreviews" : "pinPreviews", "")
         }
     }
 
@@ -187,20 +211,16 @@ Item {
         }
     }
 
-    Item {
+    StyledClippingRect {
         id: preview
         visible: root.expanded
         x: 10
         y: 39
         width: root.width - 20
         height: root.previewHeight
+        radius: 12
         clip: true
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 12
-            color: Colours.palette.m3surface
-        }
+        color: Colours.palette.m3surface
 
         Item {
             id: frame
