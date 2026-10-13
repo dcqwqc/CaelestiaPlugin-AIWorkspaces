@@ -136,12 +136,17 @@ SettingsObject {
         inputType: SettingMeta.Switch
     }
 
+    // Legacy switch retained for existing profiles; presentation selects the
+    // actual native shell panel versus explicitly detached floating mode.
     property bool agentCursorDocked: false
-    SettingMeta on agentCursorDocked {
-        label: "Dock workspace cards top left"
-        description: "Snap previews beneath the top bar, or release them to their floating position."
-        icon: "north_west"
-        inputType: SettingMeta.Switch
+
+    property string agentCursorPresentation: "integrated"
+    SettingMeta on agentCursorPresentation {
+        label: "AI preview presentation"
+        description: "Integrated is a tiny native QuickShell tab that expands on hover. Floating is an optional movable window."
+        icon: "picture_in_picture"
+        inputType: SettingMeta.SplitButton
+        options: ["integrated", "floating"]
     }
 
     // Updated by dragging the title of a preview; -1 uses the corner setting.
@@ -150,8 +155,8 @@ SettingsObject {
 
     property string agentCursorPosition: "bottom-right"
     SettingMeta on agentCursorPosition {
-        label: "Agent preview corner"
-        description: "Screen corner for the agent previews on the focused monitor."
+        label: "Floating preview corner"
+        description: "Default corner used only for explicitly detached floating previews."
         icon: "picture_in_picture"
         inputType: SettingMeta.SplitButton
         options: ["bottom-right", "top-right", "bottom-left", "top-left"]
