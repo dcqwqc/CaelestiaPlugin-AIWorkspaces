@@ -20,7 +20,7 @@ import qs.utils
 // Their tiny headers offer drag, pin and dock controls, but they never forward
 // mouse or keyboard events to the isolated agent display.
 //
-// // The service writes $XDG_RUNTIME_DIR/loom/agent-cursors.json on change; this
+// The service writes $XDG_RUNTIME_DIR/loom/agent-cursors.json on change; this
 // file is watched, never polled.
 Scope {
     id: root
@@ -56,12 +56,22 @@ Scope {
     readonly property string animation: settings ? settings.agentCursorAnimation : "full"
     readonly property int tileWidth: settings ? settings.agentCursorTileWidth : 240
     readonly property string corner: settings ? settings.agentCursorPosition : "bottom-right"
+    // Native shell panel is the default. Floating must be explicitly selected.
+    readonly property string presentation: settings?.agentCursorPresentation ?? "integrated"
+    readonly property string presentationFile: runtimeDir + "/loom/preview-presentation.json"
+    readonly property string presentationWriter: Paths.toLocalFile(Qt.resolvedUrl("scripts/preview_presentation.py"))
+    onPresentationChanged: publishPresentation()
+    onEnabledChanged: publishPresentation()
+    Component.onCompleted: publishPresentation()
     // Persistent floating-card state, independent of cursor activity.
     readonly property bool pinned: (settings?.agentCursorPinned ?? true)
     readonly property bool docked: (settings?.agentCursorDocked ?? false)
     readonly property int floatingX: (settings?.agentCursorFloatingX ?? -1)
     readonly property int floatingY: (settings?.agentCursorFloatingY ?? -1)
-    onPinnedChanged: recompute()
+    onPinnedChanged: {
+        recompute();
+        publishPresentation();
+    }
 
     readonly property real motionScale: animation === "off" ? 0 : animation === "subtle" ? 0.6 : 1
     readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
@@ -78,7 +88,10 @@ Scope {
     property int liveSeq: 0
     property bool controlsOpen: false
     property bool allHidden: false
-    onAllHiddenChanged: recompute()
+    onAllHiddenChanged: {
+        recompute();
+        publishPresentation();
+    }
 
     function sameList(a: var, b: var): bool {
         return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -97,6 +110,15 @@ Scope {
 
     function ctl(command: string, payload: var): void {
         Quickshell.execDetached(["/usr/bin/python3", root.serviceCtl, "ctl", command, JSON.stringify(payload || {})]);
+    }
+
+    function publishPresentation(): void {
+        Quickshell.execDetached([
+            "/usr/bin/python3", root.presentationWriter, root.presentationFile,
+            root.presentation === "floating" ? "floating" : "integrated",
+            root.enabled && !root.allHidden ? "1" : "0",
+            root.pinned ? "1" : "0"
+        ]);
     }
 
     FileView {
@@ -140,16 +162,21 @@ Scope {
         function previewState(): string {
             return JSON.stringify({
                 pinned: root.pinned, docked: root.docked,
+                presentation: root.presentation,
                 floatingX: root.floatingX, floatingY: root.floatingY,
                 settingsLoaded: !!root.settings,
                 settingsSupportsPin: root.settings?.agentCursorPinned !== undefined
             });
         }
         function dockTopLeft(): void {
-            if (root.settings) root.settings.agentCursorDocked = true;
+            if (root.settings) root.settings.agentCursorPresentation = "integrated";
         }
         function undock(): void {
-            if (root.settings) root.settings.agentCursorDocked = false;
+            if (root.settings) root.settings.agentCursorPresentation = "floating";
+        }
+        function setPreviewMode(mode: string): void {
+            if (root.settings && (mode === "integrated" || mode === "floating"))
+                root.settings.agentCursorPresentation = mode;
         }
         function pinPreviews(): void {
             if (root.settings) root.settings.agentCursorPinned = true;
@@ -188,6 +215,12 @@ Scope {
 
             required property ShellScreen modelData
             readonly property bool focusedScreen: (Hypr.focusedMonitor?.name ?? "") === modelData.name
+            readonly property bool hasFullscreen: {
+                const monitor = Hypr.monitorFor(modelData);
+                const special = monitor?.lastIpcObject.specialWorkspace?.name ?? "";
+                const workspace = special ? Hypr.workspaces.values.find(w => w.name === special) : monitor?.activeWorkspace;
+                return workspace?.toplevels.values.some(t => t.lastIpcObject.fullscreen > 1) ?? false;
+            }
             readonly property real defaultX: root.corner.endsWith("right") ? modelData.width - root.tileWidth - 22 : 22
             readonly property real defaultY: root.corner.startsWith("bottom") ? modelData.height - implicitHeight - 24 : 58
             readonly property real placementX: Math.max(10, Math.min(Math.max(10, modelData.width - root.tileWidth - 10),
@@ -196,10 +229,12 @@ Scope {
                 root.docked ? 60 : root.floatingY >= 0 ? root.floatingY : defaultY))
 
             screen: modelData
-            visible: root.enabled && focusedScreen && !root.viewerOpen && root.shownIds.length > 0
+            visible: root.enabled && root.presentation === "floating"
+                && focusedScreen && !hasFullscreen && !root.viewerOpen && root.shownIds.length > 0
             color: "transparent"
             exclusionMode: ExclusionMode.Ignore
-            WlrLayershell.layer: WlrLayer.Overlay
+            // Optional floating mode only; no default always-on-top overlay.
+            WlrLayershell.layer: WlrLayer.Top
             WlrLayershell.namespace: "loom-agent-cursors"
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
             // Non-empty input region: the card can now be moved/docked/pinned.
@@ -373,7 +408,7 @@ Scope {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.settings) root.settings.agentCursorDocked = !root.docked
+                        onClicked: if (root.settings) root.settings.agentCursorPresentation = "integrated"
                     }
                 }
             }
