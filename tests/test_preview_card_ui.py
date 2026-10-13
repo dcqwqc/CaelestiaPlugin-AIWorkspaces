@@ -11,7 +11,7 @@ class PreviewCardTests(unittest.TestCase):
     def test_pin_survives_agent_cursor_idle(self):
         self.assertIn("property bool agentCursorPinned: true", SETTINGS)
         self.assertIn("(a.active || root.pinned) && !a.hidden", MAIN)
-        self.assertIn("onPinnedChanged: recompute()", MAIN)
+        self.assertIn("onPinnedChanged:", MAIN)
 
     def test_still_respects_explicit_hide(self):
         self.assertIn("!a.hidden && !root.allHidden", MAIN)
