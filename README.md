@@ -83,31 +83,45 @@ execution, ChatGPT web sessions, or remote agents that bypass the launcher.
 The `loomTaskVisibility` setting defaults to true and can be disabled in
 the plugin's configuration if needed.
 
-## AI workspaces: native preview dock (v0.3)
+## AI workspace circles beneath the normal workspace dots (v0.4)
 
-The default preview is **integrated**, not floating. A 72-pixel compact AI
-tab joins Caelestia's existing top-left shell-panel frame. Hover to expand
-the live workspace thumbnail and task name; move the pointer away to collapse.
-It does not create an independent overlay and does not appear above fullscreen
-apps. Its border/shadow are owned by the native Caelestia ShellPanels host.
+The plugin registers a real `bar-entry` (`aiAgentDots`) and matching native
+`bar-popout` instead of the former top-left shell-panel.
 
-The expanded preview includes a pin state, a detach control and a close
-(collapsing) control. Detach is explicit: it switches presentation to
-**floating**, which preserves the old draggable card and its saved position.
-Use the floating card's dock control to return to the small native tab.
-The tab stays available for an idle agent while previews are pinned.
+- One **solid workspace-colored circle** per active or pinned graphical agent,
+  stacked vertically below the five ordinary workspace indicators and above
+  the active-window titles. No number, gray background, bar, agent icon or
+  text is painted in the collapsed bar.
+- **Hover** a specific dot to see that agent's live screenshot and its
+  corresponding pointer immediately to the right, in the existing QuickShell
+  bar popout. Hover alone never switches workspaces or focus.
+- **Click** a dot to show `special:loom-agents` and focus that nested agent's
+  corresponding host window. Xvfb sessions use the viewer fallback.
+- Inactive agents remain visible when pinned; hidden/released/crashed agents
+  disappear. The old movable floating mode remains an explicit opt-in.
 
-Select the default in Nexus → Plugins → AIWorkspaces → Settings:
-**AI preview presentation: integrated / floating**. Existing floating
-corner and size settings apply only to the explicit floating mode.
-The former `agentCursorDocked` setting is retained for older profiles but
-no longer controls the native presentation.
+The hovered workspace ID is written atomically to
+`$XDG_RUNTIME_DIR/loom/preview-selection.json`, which the popout watches.
+No polling loop or extra overlay window is introduced.
 
-The plugin controller and native panel share only the two narrow pieces of
-state they need via an atomically written JSON file at
-`$XDG_RUNTIME_DIR/loom/preview-presentation.json`. The agent image/pointer
-data still comes from `loom/agent-cursors.json`. This does not change the
-screenshot capture rate or guarantee a continuous real-time video stream.
+### Install / deploy
+
+```sh
+python3 ~/.local/share/caelestia/plugins/ai-workspaces/scripts/install_bar_entry.py
+```
+
+The installer preserves other user settings and idempotently inserts the
+`aiAgentDots` entry directly after `workspaces` in
+`~/.config/caelestia/shell.json`.
+
+For *exact hovered-circle vertical alignment*, a tiny optional host patch is
+included as `patches/bar-agent-popout-anchor.patch`. In
+`~/.config/quickshell/caelestia`, run `git apply --check` on the patch before
+applying it. Without this enhancement, native popouts still work but anchor at
+the middle of the dot stack. Mirai has the host patch applied.
+
+This still uses the Loom screenshot feed; it is not a fully continuous video
+stream, and mouse movement may update between captured frames.
 
 ### QuickShell IPC
 
@@ -117,16 +131,5 @@ qs -c caelestia ipc --any-display call loomAgents setPreviewMode integrated
 qs -c caelestia ipc --any-display call loomAgents setPreviewMode floating
 qs -c caelestia ipc --any-display call loomAgents pinPreviews
 qs -c caelestia ipc --any-display call loomAgents unpinPreviews
-qs -c caelestia ipc --any-display call loomAgents toggleControls
 ```
-
-### Verification needed before deployment/merge
-
-- On Mirai, confirm the native shell-panel entry point loads without
-  QML warnings and the 72-pixel tab joins the bar without covering apps.
-- Hover/collapse and the detach → float → dock cycle work across reloads.
-- Confirm fullscreen hides the panel; inactive/pinned agents remain listed.
-- Visually inspect pointer placement at more than one aspect ratio.
-- Run Python tests and check Quickshell logs. Static tests alone are not
-  evidence of successful display.
 

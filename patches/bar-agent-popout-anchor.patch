@@ -1,0 +1,20 @@
+diff --git a/modules/bar/Bar.qml b/modules/bar/Bar.qml
+index 0037bf28..85e44db7 100644
+--- a/modules/bar/Bar.qml
++++ b/modules/bar/Bar.qml
+@@ -80,7 +80,14 @@ ColumnLayout {
+             popouts.hasCurrent = true;
+         } else if (Plugins.entryPoints(EntryPointType.BarPopout).some(p => p.properties.entry === id)) {
+             popouts.currentName = id.toLowerCase();
+-            popouts.currentCenter = Qt.binding(() => (ch.item as Item).mapToItem(root, 0, (ch.item as Item).implicitHeight / 2).y ?? 0);
++            // A plugin bar entry can advertise the y-coordinate of its
++            // hovered sub-item. Otherwise keep the original midpoint.
++            popouts.currentCenter = Qt.binding(() => {
++                const loader = ch.item;
++                const entry = loader?.item ?? loader;
++                const anchorY = entry?.popoutAnchorY ?? loader?.implicitHeight / 2 ?? 0;
++                return loader?.mapToItem(root, 0, anchorY).y ?? 0;
++            });
+             popouts.hasCurrent = true;
+         }
+     }

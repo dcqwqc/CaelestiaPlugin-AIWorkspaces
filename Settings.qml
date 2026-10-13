@@ -143,7 +143,7 @@ SettingsObject {
     property string agentCursorPresentation: "integrated"
     SettingMeta on agentCursorPresentation {
         label: "AI preview presentation"
-        description: "Integrated is a tiny native QuickShell tab that expands on hover. Floating is an optional movable window."
+        description: "Integrated shows agent-colored dots below the workspace switcher; hover previews open beside the bar. Floating is optional."
         icon: "picture_in_picture"
         inputType: SettingMeta.SplitButton
         options: ["integrated", "floating"]
