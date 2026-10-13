@@ -83,47 +83,50 @@ execution, ChatGPT web sessions, or remote agents that bypass the launcher.
 The `loomTaskVisibility` setting defaults to true and can be disabled in
 the plugin's configuration if needed.
 
-## Loom agent cursors
+## AI workspaces: native preview dock (v0.3)
 
-When an agent works in one of Loom's isolated graphical workspaces (see
-`docs/AGENT_INPUT.md` in CaelestiaPlugin-Loom), this plugin (Main.qml) shows a small
-live preview of that agent's private display in a corner of the focused
-monitor. The pointer is drawn at the agent's scaled workspace position,
-with click ripples. The card accepts clicks for its own drag, pin and dock
-controls without forwarding input into the private agent display or taking
-keyboard focus. It never renders on the AI-* headless outputs and stays
-visible while an agent is idle when pinned (the default). Its state updates
-from the Loom agent-cursors.json feed without UI polling.
+The default preview is **integrated**, not floating. A 72-pixel compact AI
+tab joins Caelestia's existing top-left shell-panel frame. Hover to expand
+the live workspace thumbnail and task name; move the pointer away to collapse.
+It does not create an independent overlay and does not appear above fullscreen
+apps. Its border/shadow are owned by the native Caelestia ShellPanels host.
 
-Settings: show/hide, pin, dock, labels, opacity, animation intensity,
-preview width, default corner and saved floating position. Controls (pause/resume/hide/stop per agent):
+The expanded preview includes a pin state, a detach control and a close
+(collapsing) control. Detach is explicit: it switches presentation to
+**floating**, which preserves the old draggable card and its saved position.
+Use the floating card's dock control to return to the small native tab.
+The tab stays available for an idle agent while previews are pinned.
 
-    qs -c caelestia ipc call loomAgents toggleControls
-    qs -c caelestia ipc call loomAgents pauseAll | resumeAll | hideAll | showAll | list
+Select the default in Nexus → Plugins → AIWorkspaces → Settings:
+**AI preview presentation: integrated / floating**. Existing floating
+corner and size settings apply only to the explicit floating mode.
+The former `agentCursorDocked` setting is retained for older profiles but
+no longer controls the native presentation.
 
-When an agent session launched through `ai-workspace run` ends, its Loom
-graphical workspaces are released automatically.
+The plugin controller and native panel share only the two narrow pieces of
+state they need via an atomically written JSON file at
+`$XDG_RUNTIME_DIR/loom/preview-presentation.json`. The agent image/pointer
+data still comes from `loom/agent-cursors.json`. This does not change the
+screenshot capture rate or guarantee a continuous real-time video stream.
 
+### QuickShell IPC
 
-## Floating preview cards
+```sh
+qs -c caelestia ipc --any-display call loomAgents previewState
+qs -c caelestia ipc --any-display call loomAgents setPreviewMode integrated
+qs -c caelestia ipc --any-display call loomAgents setPreviewMode floating
+qs -c caelestia ipc --any-display call loomAgents pinPreviews
+qs -c caelestia ipc --any-display call loomAgents unpinPreviews
+qs -c caelestia ipc --any-display call loomAgents toggleControls
+```
 
-The agent preview now sits in a compact, rounded Caelestia card with an
-accent-colored halo, soft shadow and one-line title. Drag the **title area**
-to reposition it (the floating position persists). Use the **pin** control to
-keep a card present while its agent is idle; pinned is the default. The
-**north-west** action docks the card to the top-left area below the shell bar,
-and changes to an undock action while docked.
+### Verification needed before deployment/merge
 
-The preview's own header accepts pointer input but **does not control**
-the agent's private workspace. Its displayed pixels are still captured by
-Loom: pinning keeps the most recent screenshot in view; it does not turn a
-periodic screenshot feed into a continuous real-time video stream.
+- On Mirai, confirm the native shell-panel entry point loads without
+  QML warnings and the 72-pixel tab joins the bar without covering apps.
+- Hover/collapse and the detach → float → dock cycle work across reloads.
+- Confirm fullscreen hides the panel; inactive/pinned agents remain listed.
+- Visually inspect pointer placement at more than one aspect ratio.
+- Run Python tests and check Quickshell logs. Static tests alone are not
+  evidence of successful display.
 
-
-QuickShell IPC controls:
-
-    qs -c caelestia ipc --any-display call loomAgents previewState
-    qs -c caelestia ipc --any-display call loomAgents pinPreviews
-    qs -c caelestia ipc --any-display call loomAgents dockTopLeft
-    qs -c caelestia ipc --any-display call loomAgents undock
-    qs -c caelestia ipc --any-display call loomAgents resetPreviewPosition
