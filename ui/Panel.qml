@@ -94,7 +94,7 @@ Item {
         id: closeDelay
         interval: 220
         onTriggered: {
-            if (!hoverArea.containsMouse)
+            if (!hoverHandler.hovered)
                 root.expanded = false;
         }
     }
@@ -115,17 +115,21 @@ Item {
         }
     }
 
-    MouseArea {
-        id: hoverArea
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: root.expanded ? Qt.ArrowCursor : Qt.PointingHandCursor
-        onEntered: {
-            closeDelay.stop();
-            root.expanded = true;
+    // Passive hover tracking survives movement onto child controls.
+    HoverHandler {
+        id: hoverHandler
+        onHoveredChanged: {
+            if (hovered) {
+                closeDelay.stop();
+                root.expanded = true;
+            } else {
+                closeDelay.restart();
+            }
         }
-        onExited: closeDelay.restart()
-        onClicked: if (!root.expanded) root.expanded = true
+    }
+
+    TapHandler {
+        onTapped: if (!root.expanded) root.expanded = true
     }
 
     Row {

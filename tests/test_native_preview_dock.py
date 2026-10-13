@@ -39,7 +39,7 @@ class NativePreviewDockTests(unittest.TestCase):
     def test_collapsed_default_and_safe_noninteractive_preview(self):
         self.assertIn("property bool expanded: false", PANEL)
         self.assertIn("panelWidth: expanded ? 270 : 72", PANEL)
-        self.assertIn("hoverEnabled: true", PANEL)
+        self.assertIn("HoverHandler {", PANEL)
         self.assertIn('root.command("setPreviewMode", "floating")', PANEL)
         self.assertIn("Image.PreserveAspectFit", PANEL)
 
