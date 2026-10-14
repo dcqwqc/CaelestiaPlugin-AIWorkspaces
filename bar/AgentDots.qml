@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Shapes
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import Caelestia.Config
@@ -21,8 +21,10 @@ Item {
     property bool previewsEnabled: true
     property string mode: "integrated"
     readonly property var visibleAgents: agents.filter(a => pinned || a.active)
-    readonly property int dotSize: 22
-    readonly property int dotGap: 7
+    // Follow the native active workspace indicator dimensions, rather than
+    // maintaining an unrelated 22px circle.
+    readonly property int dotSize: Tokens.sizes.bar.innerWidth - Tokens.padding.small
+    readonly property int dotGap: Math.floor(Tokens.spacing.extraSmall)
 
     // Mirror Caelestia's own Workspace.qml layout: a persistent workspace
     // indicator, with one MaterialIcon BELOW it for each open window. This is
@@ -42,11 +44,11 @@ Item {
 
     property int hoveredDotIndex: 0
     // Generic optional bar-entry contract for aligning native popouts.
-    property real hoveredDotCenterY: 6 + dotSize / 2
+    property real hoveredDotCenterY: Tokens.padding.small + dotSize / 2
     readonly property real popoutAnchorY: hoveredDotCenterY
 
     implicitWidth: Tokens.sizes.bar.innerWidth
-    implicitHeight: shown ? dotColumn.implicitHeight + 12 : 0
+    implicitHeight: shown ? dotColumn.implicitHeight + Tokens.padding.small * 2 : 0
     readonly property bool shown: mode === "integrated" && previewsEnabled && visibleAgents.length > 0
     visible: shown
 
@@ -92,7 +94,7 @@ Item {
         id: dotColumn
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.topMargin: 6
+        anchors.topMargin: Tokens.padding.small
         spacing: root.dotGap
 
         Repeater {
@@ -114,59 +116,75 @@ Item {
                     const max = Config.bar.workspaces.maxWindowIcons;
                     return max > 0 ? list.slice(0, max) : list;
                 }
-                width: root.dotSize
-                height: workspaceStack.implicitHeight
+                width: Tokens.sizes.bar.innerWidth
+                height: agentPill.implicitHeight
 
-                Column {
-                    id: workspaceStack
+                // A SINGLE rounded, agent-colored capsule encloses the
+                // persistent Pac-Man AND every window icon, just like the
+                // normal workspace's ActiveIndicator overlay. No orphan icons
+                // sit below an isolated color dot.
+                StyledClippingRect {
+                    id: agentPill
                     anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 2
+                    implicitWidth: Tokens.sizes.bar.innerWidth - Tokens.padding.small
+                    implicitHeight: workspaceStack.implicitHeight + Tokens.padding.extraSmall
+                    radius: Tokens.rounding.full
+                    color: agentItem.agentTint
+                    border.width: 1
+                    border.color: Qt.alpha(agentItem.iconTint, 0.3)
 
-                    Rectangle {
-                        id: pacmanDot
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: root.dotSize
-                        height: root.dotSize
-                        radius: width / 2
-                        color: agentItem.agentTint
-                        antialiasing: true
-                        border.width: 1
-                        border.color: Qt.alpha(agentItem.iconTint, 0.40)
-
-                        // Pac-Man is never replaced by an app icon. Match
-                        // the normal workspace's primary indicator position.
-                        Canvas {
-                            anchors.centerIn: parent
-                            width: 15
-                            height: 15
-                            onPaint: {
-                                const ctx = getContext("2d");
-                                ctx.clearRect(0, 0, width, height);
-                                ctx.fillStyle = agentItem.iconTint.toString();
-                                ctx.beginPath();
-                                ctx.moveTo(7.5, 7.5);
-                                ctx.arc(7.5, 7.5, 6.25, Math.PI * 0.22, Math.PI * 1.78, false);
-                                ctx.closePath();
-                                ctx.fill();
-                            }
-                        }
-                    }
-
-                    Column {
-                        id: appIcons
-                        anchors.horizontalCenter: parent.horizontalCenter
+                    ColumnLayout {
+                        id: workspaceStack
+                        anchors.centerIn: parent
                         spacing: 0
 
-                        Repeater {
-                            model: agentItem.windows
+                        Item {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: Tokens.sizes.bar.innerWidth - Tokens.padding.small
+                            Layout.preferredHeight: Tokens.sizes.bar.innerWidth - Tokens.padding.small
 
-                            // Identical widget/font contract to Caelestia's
-                            // modules/bar/components/workspaces/Workspace.qml.
-                            MaterialIcon {
-                                required property var modelData
-                                grade: 0
-                                text: root.appIcon(modelData)
-                                color: agentItem.iconTint
+                            // Draw the permanent Pac-Man at the same position
+                            // and visual scale as an ordinary Workspace indicator.
+                            Canvas {
+                                anchors.centerIn: parent
+                                width: 14
+                                height: 14
+                                onPaint: {
+                                    const ctx = getContext("2d");
+                                    ctx.clearRect(0, 0, width, height);
+                                    ctx.fillStyle = agentItem.iconTint.toString();
+                                    ctx.beginPath();
+                                    ctx.moveTo(7, 7);
+                                    ctx.arc(7, 7, 6, Math.PI * 0.22, Math.PI * 1.78, false);
+                                    ctx.closePath();
+                                    ctx.fill();
+                                    // The small eye makes this the same
+                                    // recognizable Pac-Man as the system logo.
+                                    ctx.beginPath();
+                                    ctx.fillStyle = agentItem.agentTint.toString();
+                                    ctx.arc(7.5, 3.4, 1, 0, Math.PI * 2);
+                                    ctx.fill();
+                                }
+                            }
+                        }
+
+                        Column {
+                            id: appIcons
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.topMargin: -Tokens.sizes.bar.innerWidth / 10
+                            spacing: 0
+
+                            Repeater {
+                                model: agentItem.windows
+
+                                // Use exactly the icon component, typography,
+                                // class lookup and limit of Workspace.qml.
+                                MaterialIcon {
+                                    required property var modelData
+                                    grade: 0
+                                    text: root.appIcon(modelData)
+                                    color: agentItem.iconTint
+                                }
                             }
                         }
                     }
@@ -177,7 +195,7 @@ Item {
                     cursorShape: Qt.PointingHandCursor
                     onHoveredChanged: if (hovered) {
                         root.hoveredDotIndex = agentItem.index;
-                        root.hoveredDotCenterY = agentItem.mapToItem(root, 0, root.dotSize / 2).y;
+                        root.hoveredDotCenterY = agentItem.mapToItem(root, 0, agentPill.implicitHeight / 2).y;
                         root.choose(agentItem.modelData);
                     }
                 }

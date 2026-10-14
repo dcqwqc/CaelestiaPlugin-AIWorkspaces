@@ -88,14 +88,13 @@ the plugin's configuration if needed.
 The plugin registers a real `bar-entry` (`aiAgentDots`) and matching native
 `bar-popout` instead of the former top-left shell-panel.
 
-- One **22 px workspace-colored circle** per active or pinned graphical agent,
-  stacked vertically below the normal workspace indicators. A subtle outline
-  encloses the permanent Pac-Man-shaped Celestia workspace indicator.
-  **Separate app icons are stacked underneath it**, exactly like Caelestia's
-  ordinary workspace indicators. Every window contributes its own icon, up to
-  Caelestia's configured max window icons (browser/globe for Zen or other
-  browsers, terminal for Ghostty/Kitty/etc.). The background stays the agent's
-  assigned color, and app identities are detected within the isolated desktop.
+- One **native-sized, fully colored workspace pill** per active or pinned
+  graphical agent, matching Caelestia's regular active workspace indicator in
+  width, typography and vertical spacing. A subtle outline surrounds the entire
+  capsule. Its permanent Pac-Man-shaped workspace icon stays at the top and
+  **every open application's icon appears inside the same colored pill below**
+  (up to the normal workspace icon limit). The capsule stays in the agent's
+  chosen color while icons are detected from the private workspace's windows.
 - **Hover** a specific dot to see that agent's live screenshot and its
   corresponding pointer immediately to the right, in the existing QuickShell
   bar popout. The thumbnail crops a 5 px screenshot border beneath a single
