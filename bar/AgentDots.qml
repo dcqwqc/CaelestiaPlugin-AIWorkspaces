@@ -105,7 +105,6 @@ Item {
                 required property int index
                 required property var modelData
                 readonly property color agentTint: modelData.color || Colours.palette.m3primary
-                readonly property color iconTint: Qt.darker(agentTint, 2.2)
                 readonly property var windows: {
                     // QML repeater delegates wrap JSON arrays as QVariantList
                     // objects: JSON.stringify works, Array.isArray is false.
@@ -123,67 +122,58 @@ Item {
                 // persistent Pac-Man AND every window icon, just like the
                 // normal workspace's ActiveIndicator overlay. No orphan icons
                 // sit below an isolated color dot.
-                StyledClippingRect {
+                StyledRect {
                     id: agentPill
                     anchors.horizontalCenter: parent.horizontalCenter
                     implicitWidth: Tokens.sizes.bar.innerWidth - Tokens.padding.small
-                    implicitHeight: workspaceStack.implicitHeight + Tokens.padding.extraSmall
+                    // Exactly the size of native ActiveIndicator / Workspace.size:
+                    // one workspace row, with extra padding only when app icons exist.
+                    implicitHeight: workspaceStack.implicitHeight +
+                        (agentItem.windows.length > 0 && Config.bar.workspaces.showWindows ? Tokens.padding.extraSmall : 0)
                     radius: Tokens.rounding.full
                     color: agentItem.agentTint
-                    border.width: 1
-                    border.color: Qt.alpha(agentItem.iconTint, 0.3)
+                    clip: true
 
                     ColumnLayout {
                         id: workspaceStack
                         anchors.centerIn: parent
                         spacing: 0
 
-                        Item {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth: Tokens.sizes.bar.innerWidth - Tokens.padding.small
+                        // This is intentionally the SAME StyledText glyph, font,
+                        // line height, and text color as the native Workspace
+                        // and its ActiveIndicator. No approximate Canvas art.
+                        StyledText {
+                            id: indicator
+                            Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
                             Layout.preferredHeight: Tokens.sizes.bar.innerWidth - Tokens.padding.small
-
-                            // Draw the permanent Pac-Man at the same position
-                            // and visual scale as an ordinary Workspace indicator.
-                            Canvas {
-                                anchors.centerIn: parent
-                                width: 14
-                                height: 14
-                                onPaint: {
-                                    const ctx = getContext("2d");
-                                    ctx.clearRect(0, 0, width, height);
-                                    ctx.fillStyle = agentItem.iconTint.toString();
-                                    ctx.beginPath();
-                                    ctx.moveTo(7, 7);
-                                    ctx.arc(7, 7, 6, Math.PI * 0.22, Math.PI * 1.78, false);
-                                    ctx.closePath();
-                                    ctx.fill();
-                                    // The small eye makes this the same
-                                    // recognizable Pac-Man as the system logo.
-                                    ctx.beginPath();
-                                    ctx.fillStyle = agentItem.agentTint.toString();
-                                    ctx.arc(7.5, 3.4, 1, 0, Math.PI * 2);
-                                    ctx.fill();
-                                }
-                            }
+                            animate: true
+                            text: Config.bar.workspaces.activeLabel || Config.bar.workspaces.occupiedLabel || "󰮯"
+                            color: Colours.palette.m3onPrimary
+                            verticalAlignment: Qt.AlignVCenter
+                            font.family: Tokens.font.workspaces
                         }
 
-                        Column {
-                            id: appIcons
+                        Loader {
+                            id: windows
+                            asynchronous: true
                             Layout.alignment: Qt.AlignHCenter
+                            Layout.fillHeight: true
                             Layout.topMargin: -Tokens.sizes.bar.innerWidth / 10
-                            spacing: 0
+                            visible: active
+                            active: agentItem.windows.length > 0 && Config.bar.workspaces.showWindows
 
-                            Repeater {
-                                model: agentItem.windows
+                            sourceComponent: Column {
+                                spacing: 0
 
-                                // Use exactly the icon component, typography,
-                                // class lookup and limit of Workspace.qml.
-                                MaterialIcon {
-                                    required property var modelData
-                                    grade: 0
-                                    text: root.appIcon(modelData)
-                                    color: agentItem.iconTint
+                                Repeater {
+                                    model: agentItem.windows
+
+                                    MaterialIcon {
+                                        required property var modelData
+                                        grade: 0
+                                        text: root.appIcon(modelData)
+                                        color: Colours.palette.m3onPrimary
+                                    }
                                 }
                             }
                         }

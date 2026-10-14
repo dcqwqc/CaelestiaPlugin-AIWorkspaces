@@ -90,8 +90,9 @@ The plugin registers a real `bar-entry` (`aiAgentDots`) and matching native
 
 - One **native-sized, fully colored workspace pill** per active or pinned
   graphical agent, matching Caelestia's regular active workspace indicator in
-  width, typography and vertical spacing. A subtle outline surrounds the entire
-  capsule. Its permanent Pac-Man-shaped workspace icon stays at the top and
+  width, typography and vertical spacing, without a decorative border.
+  Its permanent Pac-Man is the exact configured Caelestia active workspace
+  glyph, rendered with the same workspace font and on-primary text color. It stays at the top and
   **every open application's icon appears inside the same colored pill below**
   (up to the normal workspace icon limit). The capsule stays in the agent's
   chosen color while icons are detected from the private workspace's windows.
