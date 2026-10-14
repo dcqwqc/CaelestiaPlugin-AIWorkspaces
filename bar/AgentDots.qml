@@ -105,7 +105,12 @@ Item {
                 readonly property color agentTint: modelData.color || Colours.palette.m3primary
                 readonly property color iconTint: Qt.darker(agentTint, 2.2)
                 readonly property var windows: {
-                    const list = Array.isArray(modelData.windows) ? modelData.windows : [];
+                    // QML repeater delegates wrap JSON arrays as QVariantList
+                    // objects: JSON.stringify works, Array.isArray is false.
+                    // Normalise to a real JS array before handing it to the
+                    // nested Repeater, otherwise ALL app icons disappear.
+                    const decoded = JSON.parse(JSON.stringify(modelData.windows ?? []));
+                    const list = Array.isArray(decoded) ? decoded : [];
                     const max = Config.bar.workspaces.maxWindowIcons;
                     return max > 0 ? list.slice(0, max) : list;
                 }
