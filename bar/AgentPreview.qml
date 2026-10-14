@@ -18,8 +18,8 @@ Item {
     readonly property var agent: agents.find(a => a.workspace === selectedWorkspace) ?? agents[0] ?? ({})
     readonly property color tint: agent.color || Colours.palette.m3primary
     readonly property int previewWidth: 300
-    // Match the generous radius of the shell's native popout surround.
-    // The screenshot must be clipped by ONE rounded mask only.
+    // One shared rounded mask for frame, cursor and outline. The screenshot's
+    // own square 1-2 px black capture edge must be cropped underneath it.
     readonly property int previewHeight: Math.max(120, Math.min(230,
         Math.round(previewWidth * Math.max(1, agent.height || 800) / Math.max(1, agent.width || 1280))))
 
@@ -58,12 +58,15 @@ Item {
     StyledClippingRect {
         id: preview
         anchors.fill: parent
-        radius: 24
+        radius: 30
         color: Colours.palette.m3surfaceContainer
 
         Item {
             id: frame
             anchors.fill: parent
+            // Overscan crops the captured window's square dark border rather
+            // than letting it end abruptly inside our curved preview corners.
+            readonly property real overscan: 5
             readonly property string url: root.agent.preview ?
                 "file://" + root.agent.preview + "?" + (root.agent.previewSeq || 0) : ""
             property bool frontA: true
@@ -76,20 +79,22 @@ Item {
             Image {
                 id: bufferA
                 anchors.fill: parent
+                anchors.margins: -frame.overscan
                 asynchronous: true
                 cache: false
                 smooth: true
-                fillMode: Image.PreserveAspectFit
+                fillMode: Image.PreserveAspectCrop
                 visible: frame.frontA && status === Image.Ready
                 onStatusChanged: if (status === Image.Ready && !frame.frontA) frame.frontA = true
             }
             Image {
                 id: bufferB
                 anchors.fill: parent
+                anchors.margins: -frame.overscan
                 asynchronous: true
                 cache: false
                 smooth: true
-                fillMode: Image.PreserveAspectFit
+                fillMode: Image.PreserveAspectCrop
                 visible: !frame.frontA && status === Image.Ready
                 onStatusChanged: if (status === Image.Ready && frame.frontA) frame.frontA = false
             }
@@ -100,14 +105,16 @@ Item {
             radius: preview.radius
             color: "transparent"
             border.width: 1
-            border.color: Qt.alpha(root.tint, 0.34)
+            border.color: Qt.alpha(root.tint, 0.32)
             z: 3
         }
 
         Item {
             readonly property real aw: Math.max(1, root.agent.width || 1280)
             readonly property real ah: Math.max(1, root.agent.height || 800)
-            readonly property real factor: Math.min(preview.width / aw, preview.height / ah)
+            readonly property real factor: Math.max(
+                (preview.width + 2 * frame.overscan) / aw,
+                (preview.height + 2 * frame.overscan) / ah)
             x: (preview.width - aw * factor) / 2 + (root.agent.x || 0) * factor
             y: (preview.height - ah * factor) / 2 + (root.agent.y || 0) * factor
             z: 2
