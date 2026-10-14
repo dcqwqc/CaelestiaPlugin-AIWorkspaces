@@ -18,6 +18,8 @@ Item {
     readonly property var agent: agents.find(a => a.workspace === selectedWorkspace) ?? agents[0] ?? ({})
     readonly property color tint: agent.color || Colours.palette.m3primary
     readonly property int previewWidth: 300
+    // Match the generous radius of the shell's native popout surround.
+    // The screenshot must be clipped by ONE rounded mask only.
     readonly property int previewHeight: Math.max(120, Math.min(230,
         Math.round(previewWidth * Math.max(1, agent.height || 800) / Math.max(1, agent.width || 1280))))
 
@@ -56,14 +58,12 @@ Item {
     StyledClippingRect {
         id: preview
         anchors.fill: parent
-        radius: 16
-        clip: true
+        radius: 24
         color: Colours.palette.m3surfaceContainer
 
         Item {
             id: frame
             anchors.fill: parent
-            clip: true
             readonly property string url: root.agent.preview ?
                 "file://" + root.agent.preview + "?" + (root.agent.previewSeq || 0) : ""
             property bool frontA: true
@@ -93,6 +93,15 @@ Item {
                 visible: !frame.frontA && status === Image.Ready
                 onStatusChanged: if (status === Image.Ready && frame.frontA) frame.frontA = false
             }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: preview.radius
+            color: "transparent"
+            border.width: 1
+            border.color: Qt.alpha(root.tint, 0.34)
+            z: 3
         }
 
         Item {

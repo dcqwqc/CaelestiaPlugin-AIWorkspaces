@@ -88,13 +88,17 @@ the plugin's configuration if needed.
 The plugin registers a real `bar-entry` (`aiAgentDots`) and matching native
 `bar-popout` instead of the former top-left shell-panel.
 
-- One **solid workspace-colored circle** per active or pinned graphical agent,
-  stacked vertically below the five ordinary workspace indicators and above
-  the active-window titles. No number, gray background, bar, agent icon or
-  text is painted in the collapsed bar.
+- One **22 px workspace-colored circle** per active or pinned graphical agent,
+  stacked vertically below the normal workspace indicators. A subtle outline
+  encloses an automatically selected app icon: Pac-Man-shaped Celestia for a
+  private idle desktop, browser/globe for Zen or other browsers, terminal for
+  Ghostty/Kitty/etc. The background remains the agent's assigned color. The
+  focused app is detected within the isolated graphical workspace; agents do
+  not specify their icons.
 - **Hover** a specific dot to see that agent's live screenshot and its
   corresponding pointer immediately to the right, in the existing QuickShell
-  bar popout. Hover alone never switches workspaces or focus.
+  bar popout. The thumbnail uses a single 24 px rounded clip plus a faint
+  agent-tinted outline, avoiding square corners from nested clipping. Hover alone never switches workspaces or focus.
 - **Click** a dot to show `special:loom-agents` and focus that nested agent's
   corresponding host window. Xvfb sessions use the viewer fallback.
 - Inactive agents remain visible when pinned; hidden/released/crashed agents

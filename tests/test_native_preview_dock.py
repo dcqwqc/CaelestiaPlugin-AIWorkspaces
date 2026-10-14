@@ -39,11 +39,21 @@ class AgentBarTests(unittest.TestCase):
         self.assertEqual(bars[0]["source"], "bar/AgentDots.qml")
         self.assertEqual(popouts[0]["source"], "bar/AgentPreview.qml")
 
-    def test_collapsed_state_is_only_one_solid_dot_per_agent(self):
+    def test_collapsed_state_uses_agent_tint_and_focused_app_icon(self):
         self.assertIn("Repeater {", DOTS)
         self.assertIn("model: root.visibleAgents", DOTS)
-        self.assertIn("color: modelData.color", DOTS)
+        self.assertIn("agentTint: modelData.color", DOTS)
+        self.assertIn("color: agentTint", DOTS)
         self.assertIn("radius: width / 2", DOTS)
+        self.assertIn("readonly property int dotSize: 22", DOTS)
+        self.assertIn("border.width: 1", DOTS)
+        self.assertIn("function appIcon(agent: var)", DOTS)
+        self.assertIn("agent.appClass || agent.appTitle", DOTS)
+        self.assertIn('return "language"', DOTS)
+        self.assertIn('return "terminal"', DOTS)
+        self.assertIn('return "desktop"', DOTS)
+        self.assertIn("MaterialIcon {", DOTS)
+        self.assertIn("Canvas {", DOTS)
         self.assertIn("property bool pinned: true", DOTS)
         self.assertNotIn("smart_toy", DOTS)
         self.assertNotIn("Text {", DOTS)
@@ -62,6 +72,9 @@ class AgentBarTests(unittest.TestCase):
 
     def test_preview_is_native_to_existing_shell_popout(self):
         self.assertIn("StyledClippingRect", PREVIEW)
+        self.assertIn("radius: 24", PREVIEW)
+        self.assertIn("radius: preview.radius", PREVIEW)
+        self.assertEqual(PREVIEW.count("clip: true"), 0)
         self.assertIn("Image.PreserveAspectFit", PREVIEW)
         self.assertIn("root.selectedWorkspace", PREVIEW)
         self.assertIn("agents.find(a => a.workspace === selectedWorkspace)", PREVIEW)
