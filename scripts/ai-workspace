@@ -129,6 +129,24 @@ def hypr_eval(expr: str, *, check: bool = True) -> str:
     return hyprctl("dispatch", expr, check=check)
 
 
+def launching_terminal() -> str:
+    """Address of the focused window, if it is the terminal running us."""
+    try:
+        window = hypr_json("activewindow") or {}
+    except Exception:
+        return ""
+    pid, chain = int(window.get("pid") or 0), set()
+    current = os.getpid()
+    while current > 1 and len(chain) < 32:
+        chain.add(current)
+        try:
+            with open(f"/proc/{current}/stat") as handle:
+                current = int(handle.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return str(window.get("address") or "") if pid in chain else ""
+
+
 def focused_origin() -> tuple[str, str]:
     monitors = hypr_json("monitors")
     focused = next((m for m in monitors if m.get("focused")), None)
@@ -585,6 +603,12 @@ def run_agent(
     if state is None:
         return subprocess.call(command, env=dict(os.environ))
 
+    # Where this agent lives, so its Loom card can bring it back: the
+    # terminal window it was started from, its folder and exact command.
+    state["terminalAddress"] = launching_terminal()
+    state["cwd"] = os.getcwd()
+    state["command"] = list(command)
+    write_state(state)
     env = session_env(state)
     loom = loom_task_event("start", provider=provider, session=str(state["id"]))
     loom_task_id = str(loom.get("task_id") or "") if loom.get("ok") else ""

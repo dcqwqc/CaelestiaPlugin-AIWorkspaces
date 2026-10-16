@@ -52,9 +52,11 @@ def start(provider: str, session: str, existing: str | None) -> dict:
     summary=(f"Goal: {NEEDS_OBJECTIVE}. "
              "Current: An AI worker has started a private development session. "
              "Next: The worker must name the specific app, feature, and requested outcome.")
-    r=call("loom_task_create",{"title":title,
-        "summary":summary,
-        "status":"working"})
+    args={"title":title,"summary":summary,"status":"working"}
+    # Show the real agent's icon on the card instead of an unknown-creator glyph.
+    if provider.lower() in ("claude","codex"):
+        args["creator_provider"]=provider.lower()
+    r=call("loom_task_create",args)
     if r.get("ok") and isinstance(r.get("task"),dict):
         return {"ok":True,"task_id":r["task"].get("id"),"reused":False}
     return {"ok":False,"error":r.get("error","loom-unavailable")}
