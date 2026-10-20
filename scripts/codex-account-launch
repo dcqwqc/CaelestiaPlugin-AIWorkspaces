@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Stable CLI entrypoints: codexlina -> Lina, codexlevi -> Levi.
+# codex-auth is the existing account manager; do not touch credential files.
+set -euo pipefail
+case "${0##*/}" in
+  codexlina) account='lina'; label='Lina' ;;
+  codexlevi) account='levi'; label='Levi' ;;
+  *) echo "Unrecognized Codex account launcher" >&2; exit 2 ;;
+esac
+
+# A diagnostic that does not switch accounts, open a session, restart the
+# app server, or contact a provider. Useful for verifying the two aliases.
+if [[ "${1:-}" == '--check' ]]; then
+  exec /usr/bin/python3 - "$account" "$label" <<'PY'
+import json,sys
+from pathlib import Path
+alias,label=sys.argv[1:]
+p=Path.home()/'.codex/accounts/registry.json'
+try:
+    data=json.loads(p.read_text())
+    matches=[a for a in data.get('accounts', [])
+             if isinstance(a,dict) and str(a.get('alias','')).lower()==alias]
+except (OSError,ValueError,TypeError):
+    matches=[]
+if len(matches)!=1:
+    print(f'{label}: alias is missing or ambiguous in Codex account registry',file=sys.stderr)
+    sys.exit(1)
+print(f'{label}: account alias verified ({alias})')
+PY
+fi
+
+# A renamed or removed alias must fail closed, not accidentally match another
+# stored account through a fuzzy query in codex-auth.
+"$0" --check >/dev/null || exit 1
+
+if ! command -v codex-auth >/dev/null 2>&1; then
+  echo 'codex-auth is unavailable' >&2
+  exit 1
+fi
+
+# Preserve the already-established Mirai behavior: choose the named account
+# before launching into an isolated AI workspace. Never use the ambiguous
+# legacy LZ shorthand, which is not the persisted alias.
+codex-auth switch "$account" || exit 1
+
+# The existing Mirai Codex CLI app-server uses the active shared auth state.
+# Restart only for an explicit account launch, as the old fish functions did.
+# Do NOT restart services during --check or installation.
+codex_cli="${CODEX_ACCOUNT_CLI:-/usr/bin/codex}"
+if [[ ! -x "$codex_cli" ]]; then
+  echo "Codex executable unavailable: $codex_cli" >&2
+  exit 1
+fi
+"$codex_cli" app-server daemon restart >/dev/null 2>&1 || {
+  echo 'Codex app-server restart failed after account switch' >&2
+  exit 1
+}
+
+if [[ -n "${AI_SESSION_ID:-}" ]]; then
+  exec "$codex_cli" "$@"
+fi
+exec "$HOME/.local/bin/ai-workspace" run --provider codex -- "$codex_cli" "$@"

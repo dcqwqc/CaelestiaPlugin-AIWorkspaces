@@ -139,3 +139,30 @@ qs -c caelestia ipc --any-display call loomAgents pinPreviews
 qs -c caelestia ipc --any-display call loomAgents unpinPreviews
 ```
 
+
+## Two named Codex accounts
+
+Mirai uses the two persistent aliases in the existing `codex-auth` registry:
+
+- `codexlina` selects **lina**.
+- `codexlevi` selects **levi**.
+
+The same launchers are available to Fish and other shells, using a single
+version-controlled script at `scripts/codex-account-launch`. The Fish wrappers
+simply forward their arguments to `~/.local/bin/codexlina` or `codexlevi`;
+reconfiguring AI Workspaces reinstalls those links without silently deleting
+unrelated user scripts. Existing settings, saved accounts, and active sessions
+are not modified during installation.
+
+Run `codexlina --check` or `codexlevi --check` to validate the *exact* alias in
+the local registry without switching accounts, restarting Codex, or launching a
+session. An actual invocation switches the named account using the existing
+account manager, preserves the original AI Workspaces execution behavior and
+uses the same Codex executable for daemon restart and launch.
+
+**Concurrency:** Mirai's `codex-auth` switch changes the *shared* active local
+account. Do not rely on it for simultaneous local accounts; switching can
+affect the shared app-server. Philipedia's existing `codexlina` and
+`codexlevi` launchers use separate `CODEX_HOME` directories instead and can
+keep independent account sessions. No credentials are duplicated by these
+launcher changes.

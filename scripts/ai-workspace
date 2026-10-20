@@ -694,15 +694,27 @@ end
 """
     (funcs / "codex.fish").write_text(codex)
 
-    for account, name in (("Levi", "codexlevi"), ("Lina", "codexlina")):
+    # Keep Fish and Bash launches identical. The named standalone launchers
+    # are stable even when a user invokes them outside Fish. The shared helper
+    # never touches accounts during installation or when --check is requested.
+    account_script = Path(__file__).resolve().parent / "codex-account-launch"
+    for name in ("codexlevi", "codexlina"):
+        dst = HOME / ".local/bin" / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if account_script.is_file() and (not dst.is_symlink()
+                                        or dst.resolve() != account_script):
+            # Preserve any user-created wrapper instead of deleting it while
+            # regenerating the Fish functions on plugin reconfiguration.
+            if dst.is_symlink() or dst.is_file():
+                backup = dst.with_name(dst.name + ".before-aiworkspaces-account")
+                if not backup.exists() and not backup.is_symlink():
+                    dst.rename(backup)
+                else:
+                    # An old backup exists: refuse to overwrite another owner.
+                    continue
+            dst.symlink_to(account_script)
         body = f"""function {name}
-    codex-auth switch {account}; or return 1
-    command codex app-server daemon restart >/dev/null 2>&1; or return 1
-    if set -q AI_SESSION_ID
-        command codex $argv
-    else
-        command ai-workspace run --provider codex -- /usr/bin/codex $argv
-    end
+    command "$HOME/.local/bin/{name}" $argv
 end
 """
         (funcs / f"{name}.fish").write_text(body)
