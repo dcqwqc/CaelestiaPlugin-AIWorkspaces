@@ -47,6 +47,14 @@ class NamedCodexAccountTests(unittest.TestCase):
         return subprocess.run([str(self.bin / name), *args], env=self.env,
                               capture_output=True, text=True, timeout=8)
 
+    def test_launch_does_not_require_or_restart_daemon(self):
+        proc = self.run_named('codexlevi', '--yolo')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        trace = self.trace.read_text()
+        self.assertIn('auth switch levi', trace)
+        self.assertNotIn('daemon', trace)
+        self.assertIn('--yolo', trace)
+
     def test_check_does_not_switch_accounts_or_start_services(self):
         for name, alias in (('codexlina', 'lina'), ('codexlevi', 'levi')):
             proc = self.run_named(name, '--check')
@@ -60,7 +68,7 @@ class NamedCodexAccountTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             trace = self.trace.read_text()
             self.assertIn(f'auth switch {alias}', trace)
-            self.assertIn('daemon app-server daemon restart', trace)
+            self.assertNotIn('daemon app-server daemon restart', trace)
             self.assertIn(f'workspace run --provider codex -- {self.mockbin / "codex"} --model test-model', trace)
             self.trace.unlink()
 

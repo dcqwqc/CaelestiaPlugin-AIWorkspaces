@@ -157,8 +157,11 @@ are not modified during installation.
 Run `codexlina --check` or `codexlevi --check` to validate the *exact* alias in
 the local registry without switching accounts, restarting Codex, or launching a
 session. An actual invocation switches the named account using the existing
-account manager, preserves the original AI Workspaces execution behavior and
-uses the same Codex executable for daemon restart and launch.
+account manager and preserves the original AI Workspaces execution behavior.
+It deliberately **does not restart the shared Codex app-server**, since that
+restart was failing despite valid CLI authentication and could interrupt other
+running clients. `codexlevi --yolo` and `codexlina --yolo` pass arguments
+directly to the CLI after account selection.
 
 **Concurrency:** Mirai's `codex-auth` switch changes the *shared* active local
 account. Do not rely on it for simultaneous local accounts; switching can

@@ -43,18 +43,15 @@ fi
 # legacy LZ shorthand, which is not the persisted alias.
 codex-auth switch "$account" || exit 1
 
-# The existing Mirai Codex CLI app-server uses the active shared auth state.
-# Restart only for an explicit account launch, as the old fish functions did.
-# Do NOT restart services during --check or installation.
+# An interactive Codex CLI loads the selected authentication itself. Do not
+# restart its shared app-server: that can fail when unbootstrapped, and worse,
+# it interrupts unrelated active Codex clients. The named command must never
+# treat a daemon-management failure as a reason to abort a valid CLI launch.
 codex_cli="${CODEX_ACCOUNT_CLI:-/usr/bin/codex}"
 if [[ ! -x "$codex_cli" ]]; then
   echo "Codex executable unavailable: $codex_cli" >&2
   exit 1
 fi
-"$codex_cli" app-server daemon restart >/dev/null 2>&1 || {
-  echo 'Codex app-server restart failed after account switch' >&2
-  exit 1
-}
 
 if [[ -n "${AI_SESSION_ID:-}" ]]; then
   exec "$codex_cli" "$@"
