@@ -1,0 +1,30 @@
+{
+  "name": "AIWorkspaces",
+  "version": "0.4.0",
+  "author": "dcqwqc",
+  "homepage": "https://github.com/dcqwqc/CaelestiaPlugin-AIWorkspaces",
+  "icon": "smart_toy",
+  "description": "Isolated graphical AI workspaces with minimal agent-color dots in the vertical bar and native hover previews.",
+  "entryPoints": [
+    {
+      "type": "custom",
+      "source": "Main.qml"
+    },
+    {
+      "type": "bar-entry",
+      "source": "bar/AgentDots.qml",
+      "properties": {
+        "name": "aiAgentDots"
+      }
+    },
+    {
+      "type": "bar-popout",
+      "source": "bar/AgentPreview.qml",
+      "properties": {
+        "entry": "aiAgentDots"
+      }
+    }
+  ],
+  "settings": "Settings.qml",
+  "requires": ">=2.1.0"
+}

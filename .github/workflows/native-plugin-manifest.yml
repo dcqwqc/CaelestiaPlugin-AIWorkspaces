@@ -1,0 +1,41 @@
+name: Fork + native development plugin manifest validation
+on:
+  push:
+    branches: [main, feat/upstream-plugin-dev-20261021]
+  pull_request:
+jobs:
+  validate:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check production and development manifests without breaking current fork
+        run: |
+          python3 - <<'PYCODE'
+          import json, re
+          from pathlib import Path
+          prod=json.loads(Path("manifest.json").read_text(encoding="utf-8"))
+          dev=json.loads(Path("manifest.native-dev.json").read_text(encoding="utf-8"))
+          assert not prod.get("requires"), "Production manifest must not gate current fork"
+          assert dev.get("requires")==">=2.1.0", "Experimental version requirement missing"
+          assert (prod["name"],prod["author"])==(dev["name"],dev["author"])
+          allowed={"custom","bar-entry","bar-popout","quick-toggle","status-icon","dashboard-tab"}
+          def check(m,types):
+              for key in ("name","author"):
+                  assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*",m[key]),key
+              assert isinstance(m["version"],str) and m["version"]
+              for entry in m.get("entryPoints",[]):
+                  assert entry["type"] in types,entry
+                  p=Path(entry["source"])
+                  assert p.is_file() and not p.is_absolute() and ".." not in p.parts,p
+              for key in ("settings","settingsUi"):
+                  if key in m:
+                      p=Path(m[key])
+                      assert p.is_file() and not p.is_absolute() and ".." not in p.parts,p
+          check(prod,allowed|{"shell-panel"})
+          check(dev,allowed)
+          for ep in dev.get("entryPoints",[]):
+              assert ep in prod.get("entryPoints",[]),("Missing fork equivalent",ep)
+          print("Validated compatible fork root and experimental development profile")
+          PYCODE
