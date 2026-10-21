@@ -1,0 +1,38 @@
+name: Native plugin manifest audit
+on:
+  push:
+    branches: [feat/upstream-plugin-dev-20261021]
+  pull_request:
+jobs:
+  validate:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate development manifest and referenced files
+        run: |
+          python3 - <<'PY'
+          import json, re
+          from pathlib import Path
+          root = Path.cwd()
+          path = Path("manifest.native-dev.json") if Path("manifest.native-dev.json").exists() else Path("manifest.json")
+          data = json.loads(path.read_text())
+          required = ("name", "version", "author", "requires")
+          for key in required:
+              assert isinstance(data.get(key), str) and data[key], f"{path}: missing {key}"
+          assert data["requires"] == ">=2.1.0", "Incorrect development loader version requirement"
+          for key in ("name", "author"):
+              assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", data[key]), f"Invalid plugin URI {key}: {data[key]}"
+          allowed = {"custom", "bar-entry", "bar-popout", "quick-toggle", "status-icon", "dashboard-tab"}
+          def check_file(value):
+              assert isinstance(value, str) and value and not Path(value).is_absolute() and ".." not in Path(value).parts, f"Invalid source path: {value}"
+              assert (root / value).is_file(), f"Missing source file: {value}"
+          for entry in data.get("entryPoints", []):
+              assert entry.get("type") in allowed, f"Unsupported entry type: {entry.get('type')}"
+              check_file(entry.get("source"))
+          for key in ("settings", "settingsUi"):
+              if key in data:
+                  check_file(data[key])
+          print(f"Validated {path}: {data['author']}/{data['name']} with {len(data.get('entryPoints', []))} entry points")
+          PY
