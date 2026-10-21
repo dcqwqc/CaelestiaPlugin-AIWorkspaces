@@ -18,3 +18,7 @@ Branch: `feat/upstream-plugin-dev-20261021`; original default branch and previou
 4. Preserve rollback via the previous installed plugin directory and the original Git default branch. Do not deploy without an accessible live test and automatic rollback.
 
 **Status:** Manifest prepared for native development loader; runtime behavior and deployment are not verified.
+
+## Production-safe merge profile
+
+The root `manifest.json` retains the deployed Caelestia fork entry points and has **no upstream-only minimum version requirement**. The experimental official API profile is in `manifest.native-dev.json`; it is not used by the current fork loader. Do not replace the root file with the development profile until the upstream host implements all required custom panels and placement hooks.
